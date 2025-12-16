@@ -9,7 +9,7 @@ class InferenceRequest(BaseModel):
     request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     model_id: str
     inputs: Dict[str, Any]
-    client_id: str
+    client_id: str = "on_prem_deployment"  # Default for on-prem
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -18,7 +18,7 @@ class PredictionRequest(BaseModel):
     request_id: Optional[str] = None
     model_id: str
     inputs: Dict[str, Any]
-    client_id: str
+    client_id: Optional[str] = None  # Make it optional
     
     def to_inference_request(self) -> InferenceRequest:
         """Convert external request to canonical internal format"""
@@ -26,7 +26,7 @@ class PredictionRequest(BaseModel):
             request_id=self.request_id or str(uuid.uuid4()),
             model_id=self.model_id,
             inputs=self.inputs,
-            client_id=self.client_id
+            client_id=self.client_id or "on_prem_deployment"  # Default value
         )
 
 

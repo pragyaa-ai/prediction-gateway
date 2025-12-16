@@ -104,13 +104,50 @@ async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
 
 # ========== INFERENCE API ==========
 
+@app.post("/predict/{model_id}", response_model=InferenceResponse)
+@app.post("/v1/predict/{model_id}", response_model=InferenceResponse)
+async def predict_by_path(
+    model_id: str,
+    request: Dict[str, Any],
+    background_tasks: BackgroundTasks
+) -> InferenceResponse:
+    """
+    Model-specific inference endpoint (RESTful style)
+    
+    Usage: POST /predict/los_fakeeh_ksa
+           POST /v1/predict/credit_risk_v2
+    
+    Request body only needs 'inputs' (client_id is optional):
+    {
+        "inputs": { ... }
+    }
+    
+    Or with optional client_id:
+    {
+        "client_id": "custom_client",
+        "inputs": { ... }
+    }
+    """
+    # Build PredictionRequest with model_id from path
+    from models.schemas import PredictionRequest
+    
+    prediction_request = PredictionRequest(
+        model_id=model_id,
+        inputs=request.get("inputs", {}),
+        client_id=request.get("client_id")  # None defaults to "on_prem_deployment"
+    )
+    
+    # Call the main prediction logic
+    return await predict(prediction_request, background_tasks)
+
+
 @app.post("/v1/predict", response_model=InferenceResponse)
 async def predict(
     request: PredictionRequest,
     background_tasks: BackgroundTasks
 ) -> InferenceResponse:
     """
-    Main inference endpoint
+    Main inference endpoint (legacy - supports model_id in body)
     
     1. Validates request
     2. Routes to correct model
@@ -853,14 +890,26 @@ async def get_email_config(current_user: dict = Depends(get_current_user)):
 @app.get("/")
 async def root():
     """Root endpoint"""
+    # Get list of enabled models for quick reference
+    enabled_models = [
+        model_id for model_id, config in registry.list_models().items()
+        if config.get('enabled', False)
+    ]
+    
     return {
         "service": "ML Inference Gateway",
         "version": "1.0.0",
         "endpoints": {
-            "inference": "/v1/predict",
+            "inference_legacy": "/v1/predict (with model_id in body)",
+            "inference_restful": "/predict/{model_id} or /v1/predict/{model_id}",
             "health": "/health",
             "models": "/models",
             "admin": "/admin"
+        },
+        "enabled_models": enabled_models,
+        "examples": {
+            "los_prediction": "POST /predict/los_fakeeh_ksa",
+            "credit_risk": "POST /predict/credit_risk_v2"
         }
     }
 
