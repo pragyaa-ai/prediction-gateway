@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML Gateway Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            background: white;
+            padding: 20px 30px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #2c3e50;
+            font-size: 28px;
+        }
+        
+        .subtitle {
+            color: #7f8c8d;
+            margin-top: 5px;
+        }
+        
+        .status-bar {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .status-card {
+            flex: 1;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .status-label {
+            color: #7f8c8d;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .status-value {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        
+        .status-ok {
+            color: #27ae60;
+        }
+        
+        .status-error {
+            color: #e74c3c;
+        }
+        
+        .section {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .section-title {
+            font-size: 20px;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge-enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-timeout {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .toggle-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .toggle-btn.enabled {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .toggle-btn.enabled:hover {
+            background: #229954;
+        }
+        
+        .toggle-btn.disabled {
+            background: #95a5a6;
+            color: white;
+        }
+        
+        .toggle-btn.disabled:hover {
+            background: #7f8c8d;
+        }
+        
+        .model-endpoint {
+            font-family: monospace;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        
+        .timestamp {
+            font-size: 12px;
+            color: #95a5a6;
+        }
+        
+        .prediction-value {
+            font-family: monospace;
+            background: #ecf0f1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        .reload-btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.3s;
+        }
+        
+        .reload-btn:hover {
+            background: #2980b9;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #95a5a6;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2c3e50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 ML Inference Gateway</h1>
+            <div class="subtitle">Administration Dashboard</div>
+        </header>
+        
+        <div class="status-bar">
+            <div class="status-card">
+                <div class="status-label">Gateway Status</div>
+                <div class="status-value status-ok">● ONLINE</div>
+            </div>
+            
+            <div class="status-card">
+                <div class="status-label">OpenSearch</div>
+                <div class="status-value {{ 'status-ok' if opensearch_healthy else 'status-error' }}">
+                    {{ '● CONNECTED' if opensearch_healthy else '● UNAVAILABLE' }}
+                </div>
+                <div class="timestamp">{{ opensearch_host }}</div>
+            </div>
+            
+            <div class="status-card">
+                <div class="status-label">Registered Models</div>
+                <div class="status-value">{{ models|length }}</div>
+            </div>
+        </div>
+        
+        <!-- Model Registry -->
+        <div class="section">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <h2 class="section-title">Model Registry</h2>
+                <button class="reload-btn" onclick="reloadConfig()">↻ Reload Config</button>
+            </div>
+            
+            {% if models %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model ID</th>
+                        <th>Provider</th>
+                        <th>Version</th>
+                        <th>Endpoint</th>
+                        <th>Timeout</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model_id, config in models.items() %}
+                    <tr>
+                        <td><strong>{{ model_id }}</strong></td>
+                        <td>{{ config.provider }}</td>
+                        <td>{{ config.version }}</td>
+                        <td class="model-endpoint">{{ config.endpoint_url[:60] }}...</td>
+                        <td>{{ config.timeout_ms }}ms</td>
+                        <td>
+                            <span class="badge {{ 'badge-enabled' if config.enabled else 'badge-disabled' }}">
+                                {{ 'ENABLED' if config.enabled else 'DISABLED' }}
+                            </span>
+                        </td>
+                        <td>
+                            <button 
+                                class="toggle-btn {{ 'enabled' if config.enabled else 'disabled' }}"
+                                onclick="toggleModel('{{ model_id }}', {{ config.enabled|lower }})"
+                                id="toggle-{{ model_id }}">
+                                {{ '⏸ Stop' if config.enabled else '▶ Start' }}
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">No models registered</div>
+            {% endif %}
+        </div>
+        
+        <!-- Model Statistics -->
+        {% if model_stats and model_stats.models %}
+        <div class="section">
+            <h2 class="section-title">Model Performance</h2>
+            <div class="stats-grid">
+                {% for bucket in model_stats.models.buckets %}
+                <div class="stat-item">
+                    <div class="stat-label">{{ bucket.key }}</div>
+                    <div class="stat-value">{{ "%.0f"|format(bucket.avg_latency.value) }}ms</div>
+                    <div class="timestamp">avg latency • {{ bucket.doc_count }} predictions</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Recent Predictions -->
+        <div class="section">
+            <h2 class="section-title">Recent Predictions (Last 20)</h2>
+            
+            {% if recent_predictions %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Request ID</th>
+                        <th>Model</th>
+                        <th>Client</th>
+                        <th>Prediction</th>
+                        <th>Score</th>
+                        <th>Latency</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pred in recent_predictions %}
+                    <tr>
+                        <td class="timestamp">{{ pred.timestamp[:19] }}</td>
+                        <td><code style="font-size: 11px;">{{ pred.request_id[:13] }}...</code></td>
+                        <td>{{ pred.model_id }}</td>
+                        <td>{{ pred.client_id }}</td>
+                        <td><span class="prediction-value">{{ pred.prediction }}</span></td>
+                        <td>{{ "%.2f"|format(pred.score) if pred.score else '-' }}</td>
+                        <td>{{ pred.latency_ms }}ms</td>
+                        <td>
+                            <span class="badge badge-{{ pred.status }}">{{ pred.status|upper }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                {% if opensearch_healthy %}
+                No predictions logged yet
+                {% else %}
+                OpenSearch unavailable - cannot retrieve predictions
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- API Documentation -->
+        <div class="section">
+            <h2 class="section-title">Quick API Reference</h2>
+            <div style="font-family: monospace; font-size: 13px; line-height: 1.8;">
+                <div style="margin-bottom: 15px;">
+                    <strong>POST /v1/predict</strong>
+                    <pre style="background: #f8f9fa; padding: 10px; border-radius: 4px; margin-top: 5px;">
+{
+  "model_id": "credit_risk_v2",
+  "inputs": { "age": 42, "income": 70000, "credit_score": 680 },
+  "client_id": "bank_123"
+}</pre>
+                </div>
+                <div><strong>GET /health</strong> - Gateway health check</div>
+                <div><strong>GET /models</strong> - List all models</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        async function reloadConfig() {
+            try {
+                const response = await fetch('/admin/reload-config', { method: 'POST' });
+                const data = await response.json();
+                alert(data.message);
+                location.reload();
+            } catch (error) {
+                alert('Failed to reload configuration: ' + error.message);
+            }
+        }
+        
+        async function toggleModel(modelId, currentState) {
+            const action = currentState ? 'stop' : 'start';
+            
+            if (!confirm(`Are you sure you want to ${action} model "${modelId}"?`)) {
+                return;
+            }
+            
+            try {
+                const button = document.getElementById(`toggle-${modelId}`);
+                button.disabled = true;
+                button.textContent = '⏳ Processing...';
+                
+                const response = await fetch(`/admin/toggle-model/${modelId}`, { 
+                    method: 'POST' 
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                // Show success message
+                const status = data.enabled ? 'started' : 'stopped';
+                alert(`✅ Model "${modelId}" ${status} successfully!`);
+                
+                // Reload page to show updated status
+                location.reload();
+                
+            } catch (error) {
+                alert(`❌ Failed to toggle model: ${error.message}`);
+                location.reload();
+            }
+        }
+        
+        // Auto-refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</body>
+</html>

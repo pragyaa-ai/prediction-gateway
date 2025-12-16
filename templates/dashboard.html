@@ -1,0 +1,1499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - ML Gateway</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+        }
+        
+        /* Top Navigation Bar */
+        .top-nav {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            font-weight: 700;
+        }
+        
+        .nav-user {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .user-info {
+            text-align: right;
+        }
+        
+        .user-name {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .user-role {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+        
+        .logout-btn {
+            background: rgba(255,255,255,0.2);
+            border: 1px solid rgba(255,255,255,0.3);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .logout-btn:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        /* Tab Navigation */
+        .tab-nav {
+            background: white;
+            border-bottom: 2px solid #e5e7eb;
+            margin-bottom: 24px;
+        }
+        
+        .tab-list {
+            display: flex;
+            gap: 4px;
+            list-style: none;
+            padding: 0 32px;
+        }
+        
+        .tab-item {
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+            font-weight: 500;
+            color: #64748b;
+        }
+        
+        .tab-item:hover {
+            color: #667eea;
+            background: #f8fafc;
+        }
+        
+        .tab-item.active {
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        /* Dark Mode Toggle */
+        .theme-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .theme-toggle:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        
+        body.dark-mode {
+            background: #1a202c;
+            color: #e2e8f0;
+        }
+        
+        body.dark-mode .card,
+        body.dark-mode .metrics-grid > div,
+        body.dark-mode .tab-nav {
+            background: #2d3748;
+            color: #e2e8f0;
+        }
+        
+        body.dark-mode .table-container {
+            background: #2d3748;
+        }
+        
+        body.dark-mode .table th {
+            background: #1a202c;
+        }
+        
+        body.dark-mode .table tbody tr:hover {
+            background: #374151;
+        }
+        
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
+            padding: 32px;
+        }
+        
+        /* Dashboard Header */
+        .dashboard-header {
+            margin-bottom: 32px;
+        }
+        
+        .dashboard-title {
+            font-size: 32px;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        
+        .dashboard-subtitle {
+            color: #7f8c8d;
+            font-size: 16px;
+        }
+        
+        /* Status Cards */
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+        
+        .status-card {
+            background: white;
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: transform 0.3s, box-shadow 0.3s;
+            border-left: 4px solid #667eea;
+        }
+        
+        .status-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        
+        .status-card.success {
+            border-left-color: #27ae60;
+        }
+        
+        .status-card.warning {
+            border-left-color: #f39c12;
+        }
+        
+        .status-card.error {
+            border-left-color: #e74c3c;
+        }
+        
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 16px;
+        }
+        
+        .card-icon {
+            font-size: 32px;
+        }
+        
+        .card-label {
+            color: #7f8c8d;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+        
+        .card-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+        
+        .card-subtitle {
+            color: #95a5a6;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        
+        /* Section Cards */
+        .section {
+            background: white;
+            padding: 28px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .section-title {
+            font-size: 22px;
+            color: #2c3e50;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .title-icon {
+            font-size: 24px;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #ecf0f1;
+            color: #2c3e50;
+        }
+        
+        .btn-secondary:hover {
+            background: #d5dbdd;
+        }
+        
+        /* Table Styles */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        th, td {
+            padding: 16px;
+            text-align: left;
+            border-bottom: 1px solid #ecf0f1;
+        }
+        
+        th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .badge-enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .badge-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .toggle-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .toggle-btn.enabled {
+            background: #27ae60;
+            color: white;
+        }
+        
+        .toggle-btn.enabled:hover {
+            background: #229954;
+        }
+        
+        .toggle-btn.disabled {
+            background: #95a5a6;
+            color: white;
+        }
+        
+        .toggle-btn.disabled:hover {
+            background: #7f8c8d;
+        }
+        
+        .model-endpoint {
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #95a5a6;
+        }
+        
+        .empty-icon {
+            font-size: 64px;
+            margin-bottom: 16px;
+        }
+        
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-top: 16px;
+        }
+        
+        .stat-item {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            border-left: 3px solid #667eea;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+        
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+        
+        .stat-subtitle {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-top: 4px;
+        }
+        
+        .timestamp {
+            font-size: 12px;
+            color: #95a5a6;
+        }
+        
+        .prediction-value {
+            font-family: monospace;
+            background: #ecf0f1;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        
+        /* Button styles */
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-danger {
+            background: #f87171;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+        
+        .btn-danger:hover {
+            background: #ef4444;
+        }
+    </style>
+</head>
+<body>
+    <!-- Top Navigation -->
+    <div class="top-nav">
+        <div class="nav-brand">
+            <span>🚀</span>
+            <span>ML Gateway Admin</span>
+        </div>
+        <div class="nav-user">
+            <div class="theme-toggle" onclick="toggleDarkMode()">
+                <span id="themeIcon">🌙</span>
+                <span id="themeText">Dark</span>
+            </div>
+            <div class="user-info">
+                <div class="user-name" id="userName">Loading...</div>
+                <div class="user-role">Super Admin</div>
+            </div>
+            <button class="logout-btn" onclick="logout()">
+                🚪 Logout
+            </button>
+        </div>
+    </div>
+    
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+        <ul class="tab-list">
+            <li class="tab-item active" onclick="switchTab('overview')">📊 Overview</li>
+            <li class="tab-item" onclick="switchTab('analytics')">📈 Analytics</li>
+            <li class="tab-item" onclick="switchTab('testing')">🧪 Model Testing</li>
+            <li class="tab-item" onclick="switchTab('batch')">📦 Batch Predictions</li>
+            <li class="tab-item" onclick="switchTab('apikeys')">🔑 API Keys</li>
+            <li class="tab-item" onclick="switchTab('activity')">📋 Activity Logs</li>
+            <li class="tab-item" onclick="switchTab('settings')">⚙️ Settings</li>
+        </ul>
+    </div>
+    
+    <div class="container">
+        <!-- TAB: Overview -->
+        <div id="tab-overview" class="tab-content active">
+        <!-- Dashboard Header -->
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">Dashboard Overview</h1>
+            <p class="dashboard-subtitle">Real-time monitoring and model management</p>
+        </div>
+        
+        <!-- Status Cards -->
+        <div class="status-grid">
+            <div class="status-card success">
+                <div class="card-header">
+                    <div>
+                        <div class="card-label">Gateway Status</div>
+                        <div class="card-value">● ONLINE</div>
+                    </div>
+                    <div class="card-icon">✅</div>
+                </div>
+                <div class="card-subtitle">All systems operational</div>
+            </div>
+            
+            <div class="status-card {{ 'success' if opensearch_healthy else 'error' }}">
+                <div class="card-header">
+                    <div>
+                        <div class="card-label">OpenSearch</div>
+                        <div class="card-value">{{ '● CONNECTED' if opensearch_healthy else '● OFFLINE' }}</div>
+                    </div>
+                    <div class="card-icon">{{ '🟢' if opensearch_healthy else '🔴' }}</div>
+                </div>
+                <div class="card-subtitle">{{ opensearch_host }}</div>
+            </div>
+            
+            <div class="status-card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-label">Active Models</div>
+                        <div class="card-value">{{ models|length }}</div>
+                    </div>
+                    <div class="card-icon">🤖</div>
+                </div>
+                <div class="card-subtitle">Registered endpoints</div>
+            </div>
+            
+            <div class="status-card">
+                <div class="card-header">
+                    <div>
+                        <div class="card-label">Predictions Today</div>
+                        <div class="card-value">{{ recent_predictions|length }}</div>
+                    </div>
+                    <div class="card-icon">📊</div>
+                </div>
+                <div class="card-subtitle">Last 24 hours</div>
+            </div>
+        </div>
+        
+        <!-- Model Registry -->
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="title-icon">🎯</span>
+                    Model Registry
+                </h2>
+                <div class="action-buttons">
+                    <button class="btn btn-secondary" onclick="reloadConfig()">
+                        ↻ Reload Config
+                    </button>
+                </div>
+            </div>
+            
+            {% if models %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Model ID</th>
+                        <th>Provider</th>
+                        <th>Version</th>
+                        <th>Endpoint</th>
+                        <th>Timeout</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for model_id, config in models.items() %}
+                    <tr>
+                        <td><strong>{{ model_id }}</strong></td>
+                        <td>{{ config.provider }}</td>
+                        <td><span class="badge badge-success">v{{ config.version }}</span></td>
+                        <td class="model-endpoint">{{ config.endpoint_url[:50] }}...</td>
+                        <td>{{ config.timeout_ms }}ms</td>
+                        <td>
+                            <span class="badge {{ 'badge-enabled' if config.enabled else 'badge-disabled' }}">
+                                {{ 'ENABLED' if config.enabled else 'DISABLED' }}
+                            </span>
+                        </td>
+                        <td>
+                            <button 
+                                class="toggle-btn {{ 'enabled' if config.enabled else 'disabled' }}"
+                                onclick="toggleModel('{{ model_id }}', {{ config.enabled|lower }})"
+                                id="toggle-{{ model_id }}">
+                                {{ '⏸ Stop' if config.enabled else '▶ Start' }}
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📦</div>
+                <div>No models registered</div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <!-- Model Performance -->
+        {% if model_stats and model_stats.models %}
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="title-icon">📈</span>
+                    Model Performance
+                </h2>
+            </div>
+            <div class="stats-grid">
+                {% for bucket in model_stats.models.buckets %}
+                <div class="stat-item">
+                    <div class="stat-label">{{ bucket.key }}</div>
+                    <div class="stat-value">{{ "%.0f"|format(bucket.avg_latency.value) }}ms</div>
+                    <div class="stat-subtitle">{{ bucket.doc_count }} predictions</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        
+        <!-- Recent Predictions -->
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">
+                    <span class="title-icon">🔮</span>
+                    Recent Predictions
+                </h2>
+            </div>
+            
+            {% if recent_predictions %}
+            <table>
+                <thead>
+                    <tr>
+                        <th>Timestamp</th>
+                        <th>Request ID</th>
+                        <th>Model</th>
+                        <th>Client</th>
+                        <th>Prediction</th>
+                        <th>Score</th>
+                        <th>Latency</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for pred in recent_predictions[:20] %}
+                    <tr>
+                        <td class="timestamp">{{ pred.timestamp[:19] }}</td>
+                        <td><code style="font-size: 11px;">{{ pred.request_id[:13] }}...</code></td>
+                        <td>{{ pred.model_id }}</td>
+                        <td>{{ pred.client_id }}</td>
+                        <td><span class="prediction-value">{{ pred.prediction }}</span></td>
+                        <td>{{ "%.2f"|format(pred.score) if pred.score else '-' }}</td>
+                        <td>{{ pred.latency_ms }}ms</td>
+                        <td>
+                            <span class="badge badge-{{ pred.status }}">{{ pred.status|upper }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">📭</div>
+                <div>
+                    {% if opensearch_healthy %}
+                    No predictions logged yet
+                    {% else %}
+                    OpenSearch unavailable - cannot retrieve predictions
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    </div> <!-- End tab-overview -->
+    
+    <!-- TAB: Analytics -->
+    <div id="tab-analytics" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">📈 Analytics & Insights</h1>
+            <p class="dashboard-subtitle">Real-time charts and performance metrics</p>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Prediction Volume (Last 24 Hours)</h3>
+            <canvas id="volumeChart" height="80"></canvas>
+        </div>
+        
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px;">
+            <div class="card">
+                <h3 class="card-title">Error Rates by Model</h3>
+                <canvas id="errorRateChart"></canvas>
+            </div>
+            
+            <div class="card">
+                <h3 class="card-title">Model Latency Comparison</h3>
+                <canvas id="latencyChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="card" style="margin-top: 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 class="card-title">Export Analytics Data</h3>
+                <div style="display: flex; gap: 12px;">
+                    <button class="btn-primary" onclick="exportAnalytics('csv')">📄 Export CSV</button>
+                    <button class="btn-primary" onclick="exportAnalytics('excel')">📊 Export Excel</button>
+                    <button class="btn-primary" onclick="exportAnalytics('json')">📦 Export JSON</button>
+                </div>
+            </div>
+        </div>
+    </div> <!-- End tab-analytics -->
+    
+    <!-- TAB: Model Testing -->
+    <div id="tab-testing" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">🧪 Model Testing Tool</h1>
+            <p class="dashboard-subtitle">Test models with custom inputs</p>
+        </div>
+        
+        <div class="card">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                <div>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Select Model</label>
+                    <select id="testModelId" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 16px;">
+                        {% for model_id, config in models.items() %}
+                        <option value="{{ model_id }}">{{ model_id }} ({{ config.version }})</option>
+                        {% endfor %}
+                    </select>
+                    
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Test Input (JSON)</label>
+                    <textarea id="testInput" rows="10" style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-family: monospace; font-size: 13px;" placeholder='{
+  "feature1": "value1",
+  "feature2": 123,
+  "feature3": true
+}'></textarea>
+                    
+                    <button class="btn-primary" onclick="testModel()" style="width: 100%; margin-top: 12px; padding: 12px;">
+                        🚀 Run Test Prediction
+                    </button>
+                </div>
+                
+                <div>
+                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Test Result</label>
+                    <div id="testResult" style="background: #f8f9fa; padding: 20px; border-radius: 6px; min-height: 300px; font-family: monospace; font-size: 13px; white-space: pre-wrap;">
+                        Results will appear here...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div> <!-- End tab-testing -->
+    
+    <!-- TAB: Batch Predictions -->
+    <div id="tab-batch" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">📦 Batch Predictions</h1>
+            <p class="dashboard-subtitle">Upload CSV files for bulk predictions</p>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Upload CSV File</h3>
+            
+            <div style="margin: 20px 0;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Select Model</label>
+                <select id="batchModelId" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 16px;">
+                    {% for model_id, config in models.items() %}
+                    <option value="{{ model_id }}">{{ model_id }} ({{ config.version }})</option>
+                    {% endfor %}
+                </select>
+                
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Choose CSV File</label>
+                <input type="file" id="batchFile" accept=".csv" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 16px;">
+                
+                <button class="btn-primary" onclick="uploadBatch()" style="width: 100%; padding: 12px;">
+                    📤 Upload & Process
+                </button>
+            </div>
+            
+            <div id="batchProgress" style="display: none; margin-top: 20px;">
+                <div style="background: #e3f2fd; padding: 16px; border-radius: 6px; margin-bottom: 12px;">
+                    <div id="batchStatus">Processing...</div>
+                    <div style="background: #90caf9; height: 8px; border-radius: 4px; margin-top: 8px;" id="progressBar"></div>
+                </div>
+            </div>
+            
+            <div id="batchResults" style="margin-top: 20px;"></div>
+        </div>
+    </div> <!-- End tab-batch -->
+    
+    <!-- TAB: API Keys -->
+    <div id="tab-apikeys" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">🔑 API Key Management</h1>
+            <p class="dashboard-subtitle">Generate and manage client API keys</p>
+        </div>
+        
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 class="card-title">API Keys</h3>
+                <button class="btn-primary" onclick="showCreateKeyModal()">➕ Generate New Key</button>
+            </div>
+            
+            <div id="apiKeysList"></div>
+        </div>
+    </div> <!-- End tab-apikeys -->
+    
+    <!-- TAB: Activity Logs -->
+    <div id="tab-activity" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">📋 Activity Logs</h1>
+            <p class="dashboard-subtitle">Audit trail of all admin actions</p>
+        </div>
+        
+        <div class="card">
+            <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+                <input type="text" id="activitySearch" placeholder="Search by user or action..." style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                <button class="btn-primary" onclick="refreshActivityLogs()">🔄 Refresh</button>
+            </div>
+            
+            <div id="activityLogsList"></div>
+        </div>
+    </div> <!-- End tab-activity -->
+    
+    <!-- TAB: Settings -->
+    <div id="tab-settings" class="tab-content">
+        <div class="dashboard-header">
+            <h1 class="dashboard-title">⚙️ Settings</h1>
+            <p class="dashboard-subtitle">Configure email alerts and system preferences</p>
+        </div>
+        
+        <div class="card">
+            <h3 class="card-title">Email Configuration</h3>
+            
+            <div id="emailConfig" style="margin-top: 20px;"></div>
+            
+            <div style="margin-top: 20px;">
+                <label style="display: block; margin-bottom: 8px; font-weight: 600;">Test Email Address</label>
+                <div style="display: flex; gap: 12px;">
+                    <input type="email" id="testEmailAddress" placeholder="test@example.com" style="flex: 1; padding: 10px; border: 1px solid #ddd; border-radius: 6px;">
+                    <button class="btn-primary" onclick="sendTestEmail()">📧 Send Test Email</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card" style="margin-top: 24px;">
+            <h3 class="card-title">Model Configuration</h3>
+            <button class="btn-primary" onclick="reloadConfig()">🔄 Reload Config from YAML</button>
+        </div>
+    </div> <!-- End tab-settings -->
+    
+    </div> <!-- End container -->
+    
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script>
+        // Check authentication
+        const token = localStorage.getItem('admin_token');
+        const user = JSON.parse(localStorage.getItem('admin_user') || '{}');
+        
+        if (!token) {
+            window.location.href = '/admin/login';
+        } else {
+            document.getElementById('userName').textContent = user.name || 'Admin';
+        }
+        
+        function logout() {
+            if (confirm('Are you sure you want to logout?')) {
+                localStorage.removeItem('admin_token');
+                localStorage.removeItem('admin_user');
+                window.location.href = '/admin/login';
+            }
+        }
+        
+        async function reloadConfig() {
+            try {
+                const response = await fetch('/admin/reload-config', { 
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                const data = await response.json();
+                alert('✅ ' + data.message);
+                location.reload();
+            } catch (error) {
+                alert('❌ Failed to reload configuration: ' + error.message);
+            }
+        }
+        
+        async function toggleModel(modelId, currentState) {
+            const action = currentState ? 'stop' : 'start';
+            
+            if (!confirm(`Are you sure you want to ${action} model "${modelId}"?`)) {
+                return;
+            }
+            
+            try {
+                const button = document.getElementById(`toggle-${modelId}`);
+                button.disabled = true;
+                button.textContent = '⏳ Processing...';
+                
+                const response = await fetch(`/admin/toggle-model/${modelId}`, { 
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                const status = data.enabled ? 'started' : 'stopped';
+                alert(`✅ Model "${modelId}" ${status} successfully!`);
+                location.reload();
+                
+            } catch (error) {
+                alert(`❌ Failed to toggle model: ${error.message}`);
+                location.reload();
+            }
+        }
+        
+        // ============================================================================
+        // TAB SWITCHING
+        // ============================================================================
+        
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Remove active from all tab items
+            document.querySelectorAll('.tab-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+            event.target.classList.add('active');
+            
+            // Load data for specific tabs
+            if (tabName === 'analytics') {
+                loadAnalytics();
+            } else if (tabName === 'apikeys') {
+                loadAPIKeys();
+            } else if (tabName === 'activity') {
+                refreshActivityLogs();
+            } else if (tabName === 'settings') {
+                loadEmailConfig();
+            }
+        }
+        
+        // ============================================================================
+        // DARK MODE
+        // ============================================================================
+        
+        function toggleDarkMode() {
+            const isDark = document.body.classList.toggle('dark-mode');
+            localStorage.setItem('darkMode', isDark);
+            document.getElementById('themeIcon').textContent = isDark ? '☀️' : '🌙';
+            document.getElementById('themeText').textContent = isDark ? 'Light' : 'Dark';
+        }
+        
+        // Load dark mode preference
+        if (localStorage.getItem('darkMode') === 'true') {
+            document.body.classList.add('dark-mode');
+            document.getElementById('themeIcon').textContent = '☀️';
+            document.getElementById('themeText').textContent = 'Light';
+        }
+        
+        // ============================================================================
+        // ANALYTICS
+        // ============================================================================
+        
+        let volumeChart, errorRateChart, latencyChart;
+        
+        async function loadAnalytics() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                
+                // Load timeline data
+                const timelineRes = await fetch('/admin/analytics/timeline?hours=24', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const timelineData = await timelineRes.json();
+                
+                // Load error rates
+                const errorRes = await fetch('/admin/analytics/error-rates', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const errorData = await errorRes.json();
+                
+                // Render charts
+                renderVolumeChart(timelineData.data || []);
+                renderErrorRateChart(errorData.data || []);
+                renderLatencyChart();
+                
+            } catch (error) {
+                console.error('Error loading analytics:', error);
+            }
+        }
+        
+        function renderVolumeChart(data) {
+            const ctx = document.getElementById('volumeChart');
+            if (volumeChart) volumeChart.destroy();
+            
+            volumeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(d => d.timestamp || d.hour),
+                    datasets: [{
+                        label: 'Predictions',
+                        data: data.map(d => d.count || 0),
+                        borderColor: '#667eea',
+                        backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                        tension: 0.4,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: true,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        function renderErrorRateChart(data) {
+            const ctx = document.getElementById('errorRateChart');
+            if (errorRateChart) errorRateChart.destroy();
+            
+            errorRateChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => d.model_id),
+                    datasets: [{
+                        label: 'Error Rate (%)',
+                        data: data.map(d => d.error_rate || 0),
+                        backgroundColor: data.map(d => 
+                            (d.error_rate || 0) > 5 ? '#f87171' : '#34d399'
+                        )
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100
+                        }
+                    }
+                }
+            });
+        }
+        
+        function renderLatencyChart() {
+            const ctx = document.getElementById('latencyChart');
+            if (latencyChart) latencyChart.destroy();
+            
+            // Sample data - in production, fetch from API
+            latencyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: Object.keys({{ models|tojson }}),
+                    datasets: [{
+                        label: 'Avg Latency (ms)',
+                        data: Object.keys({{ models|tojson }}).map(() => Math.random() * 500 + 100),
+                        backgroundColor: '#667eea'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+        
+        async function exportAnalytics(format) {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch(`/admin/analytics/export?format=${format}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                if (!response.ok) throw new Error('Export failed');
+                
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `analytics_${new Date().toISOString().split('T')[0]}.${format === 'excel' ? 'xlsx' : format}`;
+                a.click();
+                window.URL.revokeObjectURL(url);
+                
+                alert(`✅ Analytics exported as ${format.toUpperCase()}`);
+            } catch (error) {
+                alert(`❌ Export failed: ${error.message}`);
+            }
+        }
+        
+        // ============================================================================
+        // MODEL TESTING
+        // ============================================================================
+        
+        async function testModel() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const modelId = document.getElementById('testModelId').value;
+                const inputText = document.getElementById('testInput').value;
+                
+                let testInput;
+                try {
+                    testInput = JSON.parse(inputText);
+                } catch (e) {
+                    alert('❌ Invalid JSON input. Please check your syntax.');
+                    return;
+                }
+                
+                const resultDiv = document.getElementById('testResult');
+                resultDiv.textContent = 'Running prediction...';
+                
+                const response = await fetch('/admin/test-model', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ model_id: modelId, test_input: testInput })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.textContent = JSON.stringify(data, null, 2);
+                    resultDiv.style.background = '#d4edda';
+                    resultDiv.style.color = '#155724';
+                } else {
+                    resultDiv.textContent = JSON.stringify(data, null, 2);
+                    resultDiv.style.background = '#f8d7da';
+                    resultDiv.style.color = '#721c24';
+                }
+            } catch (error) {
+                document.getElementById('testResult').textContent = `Error: ${error.message}`;
+                document.getElementById('testResult').style.background = '#f8d7da';
+            }
+        }
+        
+        // ============================================================================
+        // BATCH PREDICTIONS
+        // ============================================================================
+        
+        async function uploadBatch() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const modelId = document.getElementById('batchModelId').value;
+                const fileInput = document.getElementById('batchFile');
+                const file = fileInput.files[0];
+                
+                if (!file) {
+                    alert('Please select a CSV file');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                document.getElementById('batchProgress').style.display = 'block';
+                document.getElementById('batchStatus').textContent = 'Uploading and processing...';
+                
+                const response = await fetch(`/admin/batch-upload?model_id=${modelId}`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('batchStatus').innerHTML = `
+                        ✅ Batch processing complete!<br>
+                        Total: ${data.total_rows} | Success: ${data.success_count} | Errors: ${data.error_count}
+                    `;
+                    
+                    document.getElementById('batchResults').innerHTML = `
+                        <div style="max-height: 400px; overflow-y: auto; margin-top: 16px;">
+                            <pre style="background: #f8f9fa; padding: 12px; border-radius: 6px;">${JSON.stringify(data.results, null, 2)}</pre>
+                        </div>
+                    `;
+                } else {
+                    document.getElementById('batchStatus').textContent = `❌ Error: ${data.detail}`;
+                }
+                
+            } catch (error) {
+                document.getElementById('batchStatus').textContent = `❌ Error: ${error.message}`;
+            }
+        }
+        
+        // ============================================================================
+        // API KEY MANAGEMENT
+        // ============================================================================
+        
+        async function loadAPIKeys() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/api-keys', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                const keys = data.data || [];
+                
+                const html = keys.length === 0 ? 
+                    '<div class="empty-state"><div class="empty-icon">🔑</div><div>No API keys generated yet</div></div>' :
+                    `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Client Name</th>
+                                <th>Email</th>
+                                <th>Created</th>
+                                <th>Last Used</th>
+                                <th>Usage Count</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${keys.map(key => `
+                                <tr>
+                                    <td>${key.client_name}</td>
+                                    <td>${key.client_email}</td>
+                                    <td class="timestamp">${key.created_at?.substring(0, 19) || '-'}</td>
+                                    <td class="timestamp">${key.last_used?.substring(0, 19) || 'Never'}</td>
+                                    <td>${key.usage_count || 0}</td>
+                                    <td><span class="badge ${key.revoked ? 'badge-disabled' : 'badge-enabled'}">${key.revoked ? 'Revoked' : 'Active'}</span></td>
+                                    <td>
+                                        ${!key.revoked ? `<button class="btn-danger" onclick="revokeAPIKey('${key.key_hash}')">🗑️ Revoke</button>` : ''}
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    `;
+                
+                document.getElementById('apiKeysList').innerHTML = html;
+                
+            } catch (error) {
+                console.error('Error loading API keys:', error);
+            }
+        }
+        
+        function showCreateKeyModal() {
+            const clientName = prompt('Enter client name:');
+            if (!clientName) return;
+            
+            const clientEmail = prompt('Enter client email:');
+            if (!clientEmail) return;
+            
+            createAPIKey(clientName, clientEmail);
+        }
+        
+        async function createAPIKey(clientName, clientEmail) {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/api-keys', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ client_name: clientName, client_email: clientEmail })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(`✅ API Key Created!\n\nKey: ${data.data.api_key}\n\n⚠️ Save this key now - it won't be shown again!`);
+                    loadAPIKeys();
+                } else {
+                    alert(`❌ Failed to create API key: ${data.detail}`);
+                }
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+        
+        async function revokeAPIKey(keyHash) {
+            if (!confirm('Are you sure you want to revoke this API key? This action cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch(`/admin/api-keys/${keyHash}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert('✅ API key revoked successfully');
+                    loadAPIKeys();
+                } else {
+                    alert(`❌ Failed to revoke: ${data.detail}`);
+                }
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+        
+        // ============================================================================
+        // ACTIVITY LOGS
+        // ============================================================================
+        
+        async function refreshActivityLogs() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/activity-logs?limit=100', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                const logs = data.data || [];
+                
+                const html = logs.length === 0 ?
+                    '<div class="empty-state"><div class="empty-icon">📋</div><div>No activity logs yet</div></div>' :
+                    `
+                    <table class="table">
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>User</th>
+                                <th>Action</th>
+                                <th>Details</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${logs.map(log => `
+                                <tr>
+                                    <td class="timestamp">${log.timestamp?.substring(0, 19) || '-'}</td>
+                                    <td>${log.user_name}<br><small style="color: #666;">${log.user_email}</small></td>
+                                    <td><code>${log.action}</code></td>
+                                    <td><small>${JSON.stringify(log.details || {})}</small></td>
+                                    <td><span class="badge ${log.status === 'success' ? 'badge-success' : 'badge-error'}">${log.status}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    `;
+                
+                document.getElementById('activityLogsList').innerHTML = html;
+                
+            } catch (error) {
+                console.error('Error loading activity logs:', error);
+            }
+        }
+        
+        // ============================================================================
+        // SETTINGS
+        // ============================================================================
+        
+        async function loadEmailConfig() {
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/email/config', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await response.json();
+                const config = data.config || {};
+                
+                document.getElementById('emailConfig').innerHTML = `
+                    <div class="stat-item">
+                        <div class="stat-label">SMTP Host</div>
+                        <div class="stat-value" style="font-size: 16px;">${config.smtp_host || 'Not configured'}</div>
+                    </div>
+                    <div class="stat-item" style="margin-top: 12px;">
+                        <div class="stat-label">SMTP Port</div>
+                        <div class="stat-value" style="font-size: 16px;">${config.smtp_port || 'Not configured'}</div>
+                    </div>
+                    <div class="stat-item" style="margin-top: 12px;">
+                        <div class="stat-label">SMTP User</div>
+                        <div class="stat-value" style="font-size: 16px;">${config.smtp_user || 'Not configured'}</div>
+                    </div>
+                    <div class="stat-item" style="margin-top: 12px;">
+                        <div class="stat-label">From Email</div>
+                        <div class="stat-value" style="font-size: 16px;">${config.from_email || 'Not configured'}</div>
+                    </div>
+                    <div class="stat-item" style="margin-top: 12px;">
+                        <div class="stat-label">Configuration Status</div>
+                        <div class="stat-value" style="font-size: 16px;">
+                            <span class="badge ${config.is_configured ? 'badge-success' : 'badge-error'}">
+                                ${config.is_configured ? '✅ Configured' : '❌ Not Configured'}
+                            </span>
+                        </div>
+                    </div>
+                `;
+                
+            } catch (error) {
+                console.error('Error loading email config:', error);
+            }
+        }
+        
+        async function sendTestEmail() {
+            const email = document.getElementById('testEmailAddress').value;
+            if (!email) {
+                alert('Please enter an email address');
+                return;
+            }
+            
+            try {
+                const token = localStorage.getItem('admin_token');
+                const response = await fetch('/admin/email/test', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ to_email: email })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    alert(`✅ ${data.message}`);
+                } else {
+                    alert(`❌ Failed: ${data.detail}`);
+                }
+            } catch (error) {
+                alert(`❌ Error: ${error.message}`);
+            }
+        }
+        
+        // Auto-refresh every 60 seconds (only for overview tab)
+        setInterval(() => {
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab && activeTab.id === 'tab-overview') {
+                location.reload();
+            }
+        }, 60000);
+    </script>
+
+</body>
+</html>

@@ -1,0 +1,32 @@
+los_fakeeh_ksa:
+  provider: azure_ml
+  endpoint_url: http://52934d5b-4a57-4ac8-ab56-8667f4a7a8d4.eastus.azurecontainer.io/score
+  auth_type: none
+  api_key: null
+  timeout_ms: 5000
+  version: "1.0"
+  input_mapper: los_fakeeh
+  output_mapper: los_fakeeh
+  enabled: true
+
+credit_risk_v2:
+  provider: azure_ml
+  endpoint_url: https://your-credit-endpoint.azurecontainer.io/score
+  auth_type: none
+  api_key: null
+  timeout_ms: 3000
+  version: "2.0"
+  input_mapper: credit_v2
+  output_mapper: credit_v2
+  enabled: false
+
+fraud_detection_v1:
+  provider: azure_ml
+  endpoint_url: https://your-fraud-endpoint.azurecontainer.io/score
+  auth_type: key
+  api_key: your-api-key-here
+  timeout_ms: 2000
+  version: "1.1"
+  input_mapper: fraud_v1
+  output_mapper: fraud_v1
+  enabled: false
