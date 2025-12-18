@@ -58,6 +58,74 @@ python main.py
 
 Access at: http://localhost:8000
 
+## 🐳 Docker Deployment (Recommended)
+
+The gateway includes embedded OpenSearch for analytics and logging. Use Docker for production deployments.
+
+### Quick Start with Docker
+
+```bash
+# Build and run everything
+./docker-run.sh
+
+# Or manually:
+docker-compose build
+docker-compose up -d
+```
+
+### Services Available
+
+- **Gateway API**: http://localhost:8000
+- **OpenSearch**: http://localhost:9200
+- **Admin Panel**: http://localhost:8000/admin
+
+### Docker Commands
+
+```bash
+# View logs
+docker-compose logs -f
+
+# Stop services
+docker-compose down
+
+# Rebuild after changes
+docker-compose build --no-cache
+```
+
+### Environment Variables
+
+Configure via `docker-compose.yml`:
+- `OPENSEARCH_HOST`: OpenSearch hostname
+- `OPENSEARCH_PORT`: OpenSearch port (9200)
+- `GATEWAY_HOST`: Gateway bind address (0.0.0.0)
+- `GATEWAY_PORT`: Gateway port (8000)
+
+## 🐧 Ubuntu Direct Installation
+
+For production deployment on Ubuntu servers without Docker.
+
+### Automated Installation
+
+```bash
+# Run the automated deployment script
+sudo ./ubuntu-deploy.sh
+```
+
+### Manual Installation
+
+See `UBUNTU_INSTALL.md` for detailed manual installation steps.
+
+### Ubuntu Services
+
+- **OpenSearch**: `sudo systemctl status opensearch`
+- **ML Gateway**: `sudo systemctl status ml-gateway`
+
+### Ubuntu Access URLs
+
+- **Gateway API**: http://your-server-ip:8000
+- **Admin Panel**: http://your-server-ip:8000/admin
+- **OpenSearch**: http://your-server-ip:9200
+
 ## 🎯 Admin Dashboard
 
 **URL:** http://localhost:8000/admin

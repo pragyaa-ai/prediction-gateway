@@ -9,24 +9,13 @@ los_fakeeh_ksa:
   output_mapper: los_fakeeh
   enabled: true
 
-credit_risk_v2:
-  provider: azure_ml
-  endpoint_url: https://your-credit-endpoint.azurecontainer.io/score
-  auth_type: none
-  api_key: null
-  timeout_ms: 3000
-  version: "2.0"
-  input_mapper: credit_v2
-  output_mapper: credit_v2
-  enabled: false
-
-fraud_detection_v1:
-  provider: azure_ml
-  endpoint_url: https://your-fraud-endpoint.azurecontainer.io/score
-  auth_type: key
-  api_key: your-api-key-here
-  timeout_ms: 2000
-  version: "1.1"
-  input_mapper: fraud_v1
-  output_mapper: fraud_v1
-  enabled: false
+no_show_fakeeh_ksa:
+  provider: azure_ml  # Using azure_ml adapter since API Gateway uses HTTP POST
+  endpoint_url: https://apis.pragyaa.ai/predict/predict-show-no-show
+  auth_type: none  # Update to 'key' if API key is required
+  api_key: null  # Add API key here if required
+  timeout_ms: 5000
+  version: "1.0"
+  input_mapper: no_show_fakeeh
+  output_mapper: no_show_fakeeh
+  enabled: true  # Now enabled with API Gateway URL

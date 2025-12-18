@@ -68,7 +68,7 @@ async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
     user = authenticate_user(form_data.username, form_data.password)
     if not user:
         # Log failed login attempt
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=form_data.username,
             user_name="Unknown",
             action="login",
@@ -82,7 +82,7 @@ async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
         )
     
     # Log successful login
-    await activity_logger.log_activity(
+    activity_logger.log_activity(
         user_email=user["email"],
         user_name=user["name"],
         action="login",
@@ -278,7 +278,7 @@ async def reload_config(current_user = Depends(get_current_user)) -> Dict[str, s
     try:
         registry.reload()
         
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="reload_config",
@@ -288,7 +288,7 @@ async def reload_config(current_user = Depends(get_current_user)) -> Dict[str, s
         
         return {"status": "success", "message": "Configuration reloaded"}
     except Exception as e:
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="reload_config",
@@ -308,7 +308,7 @@ async def toggle_model(model_id: str, current_user = Depends(get_current_user)) 
         
         status = "enabled" if result else "disabled"
         
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="toggle_model",
@@ -343,6 +343,17 @@ async def admin_dashboard(request: Request, user = Depends(get_current_user)):
     # In production, enforce authentication here
     
     models = registry.list_models()
+    # Convert ModelConfig objects to dicts for JSON serialization
+    models_dict = {
+        model_id: {
+            "provider": config.provider,
+            "version": config.version,
+            "enabled": config.enabled,
+            "timeout_ms": config.timeout_ms,
+            "endpoint_url": config.endpoint_url
+        }
+        for model_id, config in models.items()
+    }
     opensearch_healthy = opensearch_client.is_healthy()
     recent_predictions = opensearch_client.search_recent_predictions(limit=50)
     model_stats = opensearch_client.get_model_stats()
@@ -351,7 +362,7 @@ async def admin_dashboard(request: Request, user = Depends(get_current_user)):
         "dashboard.html",
         {
             "request": request,
-            "models": models,
+            "models": models_dict,
             "opensearch_healthy": opensearch_healthy,
             "recent_predictions": recent_predictions,
             "model_stats": model_stats,
@@ -418,7 +429,7 @@ async def export_analytics(
             raise HTTPException(status_code=404, detail="No data found for export")
         
         # Log activity
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="export_analytics",
@@ -461,7 +472,7 @@ async def export_analytics(
         
     except Exception as e:
         logger.error(f"Error exporting analytics: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="export_analytics",
@@ -482,7 +493,7 @@ async def get_activity_logs(
 ):
     """Get recent activity logs"""
     try:
-        activities = await activity_logger.get_recent_activities(limit=limit)
+        activities = activity_logger.get_recent_activities(limit=limit)
         return {
             "status": "success",
             "count": len(activities),
@@ -501,7 +512,7 @@ async def get_user_activity_logs(
 ):
     """Get activity logs for a specific user"""
     try:
-        activities = await activity_logger.get_activities_by_user(email=email, limit=limit)
+        activities = activity_logger.get_activities_by_user(email=email, limit=limit)
         return {
             "status": "success",
             "email": email,
@@ -521,7 +532,7 @@ async def get_action_activity_logs(
 ):
     """Get activity logs for a specific action type"""
     try:
-        activities = await activity_logger.get_activities_by_action(action=action, limit=limit)
+        activities = activity_logger.get_activities_by_action(action=action, limit=limit)
         return {
             "status": "success",
             "action": action,
@@ -553,7 +564,7 @@ async def create_api_key(
             permissions=permissions or ["predict"]
         )
         
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="create_api_key",
@@ -568,7 +579,7 @@ async def create_api_key(
         }
     except Exception as e:
         logger.error(f"Error creating API key: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="create_api_key",
@@ -603,7 +614,7 @@ async def revoke_api_key(
         success = await api_key_manager.revoke_key(key_hash)
         
         if success:
-            await activity_logger.log_activity(
+            activity_logger.log_activity(
                 user_email=current_user["email"],
                 user_name=current_user["name"],
                 action="revoke_api_key",
@@ -617,7 +628,7 @@ async def revoke_api_key(
         raise
     except Exception as e:
         logger.error(f"Error revoking API key: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="revoke_api_key",
@@ -715,7 +726,7 @@ async def test_model(
         latency_ms = (datetime.utcnow() - start_time).total_seconds() * 1000
         
         # Log activity
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="test_model",
@@ -734,7 +745,7 @@ async def test_model(
         raise
     except Exception as e:
         logger.error(f"Error testing model: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="test_model",
@@ -795,7 +806,7 @@ async def batch_upload_predictions(
         
         # Log activity
         success_count = sum(1 for r in results if r["status"] == "success")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="batch_upload",
@@ -821,7 +832,7 @@ async def batch_upload_predictions(
         raise
     except Exception as e:
         logger.error(f"Error processing batch upload: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="batch_upload",
@@ -848,7 +859,7 @@ async def test_email(
             body=f"This is a test email sent by {current_user['name']} ({current_user['email']}) at {datetime.utcnow().isoformat()}"
         )
         
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="test_email",
@@ -862,7 +873,7 @@ async def test_email(
         }
     except Exception as e:
         logger.error(f"Error sending test email: {e}")
-        await activity_logger.log_activity(
+        activity_logger.log_activity(
             user_email=current_user["email"],
             user_name=current_user["name"],
             action="test_email",
@@ -893,7 +904,7 @@ async def root():
     # Get list of enabled models for quick reference
     enabled_models = [
         model_id for model_id, config in registry.list_models().items()
-        if config.get('enabled', False)
+        if config.enabled
     ]
     
     return {

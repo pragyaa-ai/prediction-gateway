@@ -1,42 +1,47 @@
-from passlib.context import CryptContext
+import bcrypt
 from typing import Optional, Dict
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
-
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT settings
 SECRET_KEY = "your-secret-key-change-in-production-use-env-variable"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 hours
 
+# Pre-hashed password for "changeme123"
+# Generated with: bcrypt.hashpw(b"changeme123", bcrypt.gensalt())
+DEFAULT_PASSWORD_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5GyYmHBxvVO4."
+
 # Super admin users
 SUPER_ADMIN_USERS = {
     "gulshan@pragyaa.ai": {
         "name": "Gulshan Mehta",
         "email": "gulshan@pragyaa.ai",
-        "password_hash": pwd_context.hash("changeme123"),  # Change in production
+        "password_hash": DEFAULT_PASSWORD_HASH,  # Change in production
         "role": "super_admin"
     },
     "manoj@pragyaa.ai": {
         "name": "Manoj Gulati",
         "email": "manoj@pragyaa.ai",
-        "password_hash": pwd_context.hash("changeme123"),  # Change in production
+        "password_hash": DEFAULT_PASSWORD_HASH,  # Change in production
         "role": "super_admin"
     },
     "krishna@pragyaa.ai": {
         "name": "Krishna Bajpai",
         "email": "krishna@pragyaa.ai",
-        "password_hash": pwd_context.hash("changeme123"),  # Change in production
+        "password_hash": DEFAULT_PASSWORD_HASH,  # Change in production
         "role": "super_admin"
     }
 }
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash using bcrypt"""
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception as e:
+        print(f"Password verification error: {e}")
+        return False
 
 
 def authenticate_user(email: str, password: str) -> Optional[Dict]:

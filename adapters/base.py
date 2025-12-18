@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any
 import httpx
 import time
+import boto3
+import json
 from models.schemas import InferenceRequest, InferenceResponse, ModelConfig
 from adapters.mappers import get_input_mapper, get_output_mapper
 
@@ -83,11 +85,63 @@ class AzureMLAdapter(BaseModelAdapter):
         )
 
 
+class AWSSageMakerAdapter(BaseModelAdapter):
+    """Adapter for AWS SageMaker hosted models"""
+    
+    async def predict(self, request: InferenceRequest, config: ModelConfig) -> InferenceResponse:
+        """
+        Call AWS SageMaker endpoint and return standardized response
+        """
+        start_time = time.time()
+        
+        # Get mapper functions
+        input_mapper = get_input_mapper(config.input_mapper)
+        output_mapper = get_output_mapper(config.output_mapper)
+        
+        # Transform inputs to SageMaker format
+        sagemaker_inputs = input_mapper(request.inputs)
+        
+        try:
+            # Initialize SageMaker runtime client
+            runtime = boto3.client(
+                'sagemaker-runtime',
+                region_name=getattr(config, 'region', 'us-east-1')
+            )
+            
+            # Call SageMaker endpoint
+            response = runtime.invoke_endpoint(
+                EndpointName=getattr(config, 'endpoint_name', config.endpoint_url.split('/')[-2]),
+                ContentType='application/json',
+                Body=json.dumps(sagemaker_inputs)
+            )
+            
+            # Parse response
+            result = json.loads(response['Body'].read().decode())
+            
+        except Exception as e:
+            raise RuntimeError(f"AWS SageMaker request failed: {str(e)}")
+        
+        # Transform output to standard format
+        standardized = output_mapper(result)
+        
+        # Calculate latency
+        latency_ms = int((time.time() - start_time) * 1000)
+        
+        return InferenceResponse(
+            request_id=request.request_id,
+            model_id=request.model_id,
+            prediction=standardized["prediction"],
+            score=standardized.get("score"),
+            latency_ms=latency_ms
+        )
+
+
 # Adapter factory
 def get_adapter(provider: str) -> BaseModelAdapter:
     """Get adapter instance for provider"""
     adapters = {
         "azure_ml": AzureMLAdapter(),
+        "aws_sagemaker": AWSSageMakerAdapter(),
     }
     
     adapter = adapters.get(provider)
