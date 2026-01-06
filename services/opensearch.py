@@ -86,6 +86,7 @@ class OpenSearchClient:
                 model_id=request.model_id,
                 model_version=config.version,
                 provider=config.provider,
+                inputs=request.inputs,  # Store actual input data
                 inputs_hash=self._hash_inputs(request.inputs),
                 prediction=response.prediction,
                 score=response.score,

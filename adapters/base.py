@@ -81,7 +81,7 @@ class AzureMLAdapter(BaseModelAdapter):
             model_id=request.model_id,
             prediction=standardized["prediction"],
             score=standardized.get("score"),
-            latency_ms=latency_ms
+            latency_ms=standardized.get("latency_ms", latency_ms)
         )
 
 
@@ -132,7 +132,7 @@ class AWSSageMakerAdapter(BaseModelAdapter):
             model_id=request.model_id,
             prediction=standardized["prediction"],
             score=standardized.get("score"),
-            latency_ms=latency_ms
+            latency_ms=standardized.get("latency_ms", latency_ms)
         )
 
 

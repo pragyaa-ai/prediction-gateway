@@ -10,9 +10,9 @@
 sudo apt update && sudo apt upgrade -y
 ```
 
-## Step 2: Install Python 3.11
+## Step 2: Install Python 3
 ```bash
-sudo apt install -y python3.11 python3.11-venv python3.11-dev python3-pip
+sudo apt install -y python3 python3-venv python3-dev python3-pip
 ```
 
 ## Step 3: Install OpenSearch
@@ -28,9 +28,24 @@ sudo sed -i 's/#cluster.name: my-application/cluster.name: ml-gateway-cluster/' 
 sudo sed -i 's/#network.host: 192.168.0.1/network.host: 0.0.0.0/' /etc/opensearch/opensearch.yml
 sudo sed -i 's/#discovery.type: single-node/discovery.type: single-node/' /etc/opensearch/opensearch.yml
 
-# Start OpenSearch
-sudo systemctl enable opensearch
-sudo systemctl start opensearch
+# Install OpenSearch Dashboards
+sudo apt install -y opensearch-dashboards=2.11.0
+
+# Configure OpenSearch Dashboards
+sudo tee /etc/opensearch-dashboards/opensearch_dashboards.yml > /dev/null <<EOF
+server.port: 5601
+server.host: "0.0.0.0"
+opensearch.hosts: ["http://localhost:9200"]
+opensearch.ssl.verificationMode: none
+opensearch.username: "admin"
+opensearch.password: "Admin@123"
+opensearch.requestTimeout: 30000
+opensearch.pingTimeout: 3000
+EOF
+
+# Start OpenSearch Dashboards
+sudo systemctl enable opensearch-dashboards
+sudo systemctl start opensearch-dashboards
 ```
 
 ## Step 4: Setup Application Directory
@@ -52,7 +67,7 @@ sudo chown -R gateway:gateway /opt/ml-gateway
 cd /opt/ml-gateway
 
 # Create virtual environment
-sudo -u gateway python3.11 -m venv venv
+sudo -u gateway python3 -m venv venv
 sudo -u gateway bash -c "source venv/bin/activate && pip install --upgrade pip"
 sudo -u gateway bash -c "source venv/bin/activate && pip install -r requirements.txt"
 ```
@@ -95,6 +110,7 @@ sudo systemctl start ml-gateway
 ```bash
 sudo ufw allow 8000/tcp  # Gateway
 sudo ufw allow 9200/tcp  # OpenSearch
+sudo ufw allow 5601/tcp  # OpenSearch Dashboards
 sudo ufw allow 22/tcp    # SSH
 sudo ufw --force enable
 ```
@@ -116,6 +132,7 @@ sudo journalctl -u ml-gateway -f
 - **Gateway API**: http://your-server-ip:8000
 - **Admin Panel**: http://your-server-ip:8000/admin
 - **OpenSearch**: http://your-server-ip:9200
+- **OpenSearch Dashboards**: http://your-server-ip:5601
 
 ## Default Admin Credentials
 - Username: gulshan@pragyaa.ai

@@ -19,3 +19,14 @@ no_show_fakeeh_ksa:
   input_mapper: no_show_fakeeh
   output_mapper: no_show_fakeeh
   enabled: true  # Now enabled with API Gateway URL
+
+delay_fakeeh_dubai:
+  provider: azure_ml
+  endpoint_url: https://fakeehdubai-twyze.uaenorth.inference.ml.azure.com/score
+  auth_type: key
+  api_key: "1MmXqin38XNTpj5R7cy4EMtrjPAWZb14KjmhgXWeCXxQrnySPZYaJQQJ99BIAAAAAAAAAAAAINFRAZML20iX"
+  timeout_ms: 5000
+  version: "1.0"
+  input_mapper: delay_fakeeh_dubai
+  output_mapper: delay_fakeeh_dubai
+  enabled: true

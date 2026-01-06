@@ -77,6 +77,7 @@ docker-compose up -d
 
 - **Gateway API**: http://localhost:8000
 - **OpenSearch**: http://localhost:9200
+- **OpenSearch Dashboards (GUI)**: http://localhost:5601
 - **Admin Panel**: http://localhost:8000/admin
 
 ### Docker Commands
@@ -115,6 +116,10 @@ sudo ./ubuntu-deploy.sh
 
 See `UBUNTU_INSTALL.md` for detailed manual installation steps.
 
+### Troubleshooting
+
+If the automated script fails, see `MANUAL_FIX_GUIDE.md` for step-by-step troubleshooting and manual fixes.
+
 ### Ubuntu Services
 
 - **OpenSearch**: `sudo systemctl status opensearch`
@@ -125,6 +130,7 @@ See `UBUNTU_INSTALL.md` for detailed manual installation steps.
 - **Gateway API**: http://your-server-ip:8000
 - **Admin Panel**: http://your-server-ip:8000/admin
 - **OpenSearch**: http://your-server-ip:9200
+- **OpenSearch Dashboards**: http://your-server-ip:5601
 
 ## 🎯 Admin Dashboard
 

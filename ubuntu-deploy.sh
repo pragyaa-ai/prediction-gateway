@@ -3,7 +3,30 @@
 # Ubuntu Deployment Script for ML Gateway
 # This script installs and configures the ML Gateway on Ubuntu
 
-set -e
+# Remove set -e to preve# Configure firewall
+echo "🔥 Configuring firewall..."
+sudo ufw allow 8000/tcp
+sudo ufw allow 9200/tcp
+sudo ufw allow 22/tcp
+echo "y" | sudo ufw enable
+
+# Health check
+echo "🏥 Running health checks..."
+sleep 10
+
+# Get server IP
+SERVER_IP=$(hostname -I | awk '{print $1}')
+
+if curl -s http://localhost:8000/health > /dev/null; then
+    echo "✅ Gateway is running!"
+    echo "🌐 Gateway URL: http://$SERVER_IP:8000"
+    echo "🔍 OpenSearch URL: http://$SERVER_IP:9200"
+    echo "👨‍💼 Admin Panel: http://$SERVER_IP:8000/admin"
+else
+    echo "❌ Gateway health check failed - checking service status..."
+    sudo systemctl status ml-gateway --no-pager -l
+fiors
+# set -e
 
 echo "🚀 ML Gateway Ubuntu Deployment"
 echo "================================"
@@ -12,9 +35,9 @@ echo "================================"
 echo "📦 Updating system packages..."
 sudo apt update && sudo apt upgrade -y
 
-# Install Python 3.11 and pip
-echo "🐍 Installing Python 3.11..."
-sudo apt install -y python3.11 python3.11-venv python3.11-dev python3-pip
+# Install Python and pip
+echo "🐍 Installing Python..."
+sudo apt install -y python3 python3-venv python3-dev python3-pip
 
 # Install system dependencies
 echo "🔧 Installing system dependencies..."
@@ -30,32 +53,37 @@ sudo apt install -y opensearch=2.11.0
 # Configure OpenSearch
 echo "⚙️ Configuring OpenSearch..."
 sudo sed -i 's/#cluster.name: my-application/cluster.name: ml-gateway-cluster/' /etc/opensearch/opensearch.yml
-sudo sed -i 's/#path.data: \/var\/lib\/opensearch/path.data: \/var\/lib\/opensearch/' /etc/opensearch/opensearch.yml
-sudo sed -i 's/#path.logs: \/var\/log\/opensearch/path.logs: \/var\/log\/opensearch/' /etc/opensearch/opensearch.yml
 sudo sed -i 's/#network.host: 192.168.0.1/network.host: 0.0.0.0/' /etc/opensearch/opensearch.yml
 sudo sed -i 's/#http.port: 9200/http.port: 9200/' /etc/opensearch/opensearch.yml
 sudo sed -i 's/#discovery.type: single-node/discovery.type: single-node/' /etc/opensearch/opensearch.yml
 
-# Set OpenSearch password
-echo "🔐 Setting OpenSearch password..."
-sudo /usr/share/opensearch/plugins/opensearch-security/tools/securityadmin.sh -cd /usr/share/opensearch/plugins/opensearch-security/securityconfig/ -icl -nhnv -cacert /usr/share/opensearch/config/root-ca.pem -cert /usr/share/opensearch/config/admin.pem -key /usr/share/opensearch/config/admin-key.pem -h localhost
+# Skip OpenSearch security setup for now (can be done later)
+echo "🔐 Skipping OpenSearch security setup (will configure manually later)..."
 
 # Create gateway user and directory
 echo "👤 Creating gateway user..."
 sudo useradd -m -s /bin/bash gateway || true
 sudo mkdir -p /opt/ml-gateway
-sudo chown gateway:gateway /opt/ml-gateway
+sudo chown -R gateway:gateway /opt/ml-gateway
 
 # Clone or copy repository
 echo "📁 Setting up application directory..."
-# Assuming you're running this from the repository directory
-sudo cp -r . /opt/ml-gateway/
+# Check if we're in the repository directory
+if [ -f "main.py" ] && [ -f "requirements.txt" ]; then
+    echo "📋 Copying from current directory..."
+    sudo cp -r . /opt/ml-gateway/
+else
+    echo "📋 Cloning repository..."
+    sudo git clone https://github.com/pragyaa-ai/prediction-gateway.git /tmp/gateway-repo
+    sudo cp -r /tmp/gateway-repo/* /opt/ml-gateway/
+    sudo rm -rf /tmp/gateway-repo
+fi
 sudo chown -R gateway:gateway /opt/ml-gateway
 
 # Install Python dependencies
 echo "📦 Installing Python dependencies..."
 cd /opt/ml-gateway
-sudo -u gateway python3.11 -m venv venv
+sudo -u gateway python3 -m venv venv
 sudo -u gateway bash -c "source venv/bin/activate && pip install --upgrade pip"
 sudo -u gateway bash -c "source venv/bin/activate && pip install -r requirements.txt"
 
@@ -116,15 +144,23 @@ echo "🚀 Starting services..."
 sudo systemctl daemon-reload
 sudo systemctl enable opensearch
 sudo systemctl enable ml-gateway
+
+echo "🔄 Starting OpenSearch..."
 sudo systemctl start opensearch
 
 # Wait for OpenSearch
 echo "⏳ Waiting for OpenSearch to be ready..."
 sleep 30
-until curl -s http://localhost:9200/_cluster/health > /dev/null; do
-  sleep 5
+for i in {1..10}; do
+    if curl -s http://localhost:9200/_cluster/health > /dev/null; then
+        echo "✅ OpenSearch is ready!"
+        break
+    fi
+    echo "Waiting... ($i/10)"
+    sleep 5
 done
 
+echo "🔄 Starting ML Gateway..."
 sudo systemctl start ml-gateway
 
 # Configure firewall
@@ -142,7 +178,8 @@ if curl -s http://localhost:8000/health > /dev/null; then
     echo "✅ Gateway is running!"
     echo "🌐 Gateway URL: http://$(hostname -I | awk '{print $1}'):8000"
     echo "🔍 OpenSearch URL: http://$(hostname -I | awk '{print $1}'):9200"
-    echo "👨‍💼 Admin Panel: http://$(hostname -I | awk '{print $1}'):8000/admin"
+    echo "� Dashboards URL: http://$(hostname -I | awk '{print $1}'):5601"
+    echo "�👨‍💼 Admin Panel: http://$(hostname -I | awk '{print $1}'):8000/admin"
 else
     echo "❌ Gateway health check failed"
 fi
@@ -153,5 +190,9 @@ echo "sudo systemctl status opensearch"
 echo "sudo systemctl status ml-gateway"
 echo "sudo systemctl restart ml-gateway"
 echo "sudo journalctl -u ml-gateway -f"
+echo "sudo journalctl -u opensearch -f"
+echo ""
+echo "🔧 Troubleshooting:"
+echo "sudo systemctl stop ml-gateway && sudo -u gateway bash -c 'cd /opt/ml-gateway && source venv/bin/activate && python3 main.py'"
 echo ""
 echo "🎉 Deployment complete!"

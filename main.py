@@ -108,7 +108,7 @@ async def admin_login(form_data: OAuth2PasswordRequestForm = Depends()):
 @app.post("/v1/predict/{model_id}", response_model=InferenceResponse)
 async def predict_by_path(
     model_id: str,
-    request: Dict[str, Any],
+    request: Request,
     background_tasks: BackgroundTasks
 ) -> InferenceResponse:
     """
@@ -131,10 +131,14 @@ async def predict_by_path(
     # Build PredictionRequest with model_id from path
     from models.schemas import PredictionRequest
     
+    request_body = await request.json()
+    print(f"DEBUG: request_body type: {type(request_body)}")
+    print(f"DEBUG: request_body: {request_body}")
+    
     prediction_request = PredictionRequest(
         model_id=model_id,
-        inputs=request.get("inputs", {}),
-        client_id=request.get("client_id")  # None defaults to "on_prem_deployment"
+        inputs=request_body.get("inputs", {}),
+        client_id=request_body.get("client_id")  # None defaults to "on_prem_deployment"
     )
     
     # Call the main prediction logic
@@ -154,8 +158,15 @@ async def predict(
     3. Returns standardized response
     4. Logs asynchronously to OpenSearch
     """
+    print(f"DEBUG PREDICT: request type: {type(request)}")
+    print(f"DEBUG PREDICT: request.inputs type: {type(request.inputs)}")
+    print(f"DEBUG PREDICT: request.inputs: {request.inputs}")
+    
     # Convert to canonical format
     inference_request = request.to_inference_request()
+    
+    print(f"DEBUG PREDICT: inference_request.inputs type: {type(inference_request.inputs)}")
+    print(f"DEBUG PREDICT: inference_request.inputs: {inference_request.inputs}")
     
     # Get model configuration
     model_config = registry.get_model(inference_request.model_id)

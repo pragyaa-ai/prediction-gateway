@@ -15,13 +15,27 @@ services:
       - OPENSEARCH_HOST=localhost
       - OPENSEARCH_PORT=9200
       - OPENSEARCH_USER=admin
-      - OPENSEARCH_PASSWORD=Admin@123
+      - OPENSEARCH_PASSWORD=Adm!9Kq7Zx@42
       - OPENSEARCH_USE_SSL=false
       - OPENSEARCH_VERIFY_CERTS=false
     volumes:
       - ./config:/app/config
       - ./templates:/app/templates
       - opensearch-data:/usr/share/opensearch/data
+    networks:
+      - gateway-network
+
+  # OpenSearch Dashboards (Web GUI)
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: opensearch-dashboards
+    ports:
+      - "5601:5601"
+    environment:
+      - OPENSEARCH_HOSTS=http://gateway:9200
+      - HOME=/usr/share/opensearch-dashboards
+    depends_on:
+      - gateway
     networks:
       - gateway-network
 

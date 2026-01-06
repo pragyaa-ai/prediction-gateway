@@ -35,8 +35,8 @@ class InferenceResponse(BaseModel):
     request_id: str
     model_id: str
     prediction: Any
-    score: Optional[float] = None
-    latency_ms: int
+    score: Optional[float] = Field(default=None, exclude=True)
+    latency_ms: Optional[int] = Field(default=None, exclude=True)
 
 
 class ModelConfig(BaseModel):
@@ -58,7 +58,8 @@ class PredictionLog(BaseModel):
     model_id: str
     model_version: str
     provider: str
-    inputs_hash: str
+    inputs: Dict[str, Any]  # Store actual input data
+    inputs_hash: str  # Keep for backward compatibility and deduplication
     prediction: Any
     score: Optional[float]
     latency_ms: int

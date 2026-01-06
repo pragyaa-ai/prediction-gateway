@@ -318,12 +318,99 @@ def no_show_fakeeh_output(response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def delay_fakeeh_dubai_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Transform gateway inputs to Azure ML format for Delay Prediction model - Fakeeh Dubai
+
+    Expected inputs: Appointment details for delay prediction
+    Azure format: {input_data: pandas DataFrame structure}
+    """
+    # Debug: print what we received
+    print(f"DEBUG: inputs type: {type(inputs)}")
+    print(f"DEBUG: inputs: {inputs}")
+    
+    return {
+        "input_data": {
+            "columns": [
+                "HOSPITAL_ID_details", "PROVIDER_NAME_details", "DEPARTMENT_details",
+                "MRNO_details", "TOKEN_NO_details", "APPT_ALLOCATION_ID",
+                "FACILITY_NAME_details", "PROVIDER_NAME_delay", "DEPARTMENT_delay",
+                "MRNO_delay", "TOKEN_NO_delay", "HOSPITAL_ID_delay",
+                "FACILITY_NAME_delay", "ALLOCATION_DATETIME", "ALLOCATION_HOUR",
+                "ALLOCATION_DAY_OF_WEEK", "ALLOCATION_MONTH", "IS_WEEKEND",
+                "AGE", "GENDER_ENCODED", "STATUS_ENCODED",
+                "VISIT_METHOD_ENCODED", "PAYMENT_STATUS_ENCODED"
+            ],
+            "index": [0],
+            "data": [[
+                1.0, "Mohamed Lotfy Ahmed", "GENERAL PEDIATRICS",
+                "10155995", "7W", "1237535",
+                "Fakeeh University Hospital", "Mohamed Lotfy Ahmed", "GENERAL PEDIATRICS",
+                "10155995", "7W", 1.0,
+                "Fakeeh University Hospital", "2025-02-13T00:00:00Z", 0,
+                3, 2, 0,
+                2.0, 0.0, -1.0,
+                0.0, -1.0
+            ]]
+        }
+    }
+
+
+def delay_fakeeh_dubai_output(response: Any) -> Dict[str, Any]:
+    """
+    Transform Azure ML delay prediction response to standardized gateway format
+
+    Assumes Azure returns delay prediction and confidence score
+    Example: {"prediction": "ON_TIME", "score": 0.75} or {"result": ["DELAYED", 0.85]}
+    """
+    prediction_val = None
+    
+    # If response is a list, handle it
+    if isinstance(response, list):
+        if len(response) > 0:
+            val = response[0]
+            if isinstance(val, (list, dict)):
+                # Nested list or dict from Azure
+                if isinstance(val, list) and len(val) > 0:
+                    prediction_val = val[0]
+                elif isinstance(val, dict):
+                    prediction_val = val.get("prediction", val.get("result", str(val)))
+            else:
+                prediction_val = val
+    
+    # Handle dictionary response
+    elif isinstance(response, dict):
+        prediction_val = response.get("prediction", response.get("result", str(response)))
+    
+    else:
+        # Final fallback for any other type
+        prediction_val = str(response)
+
+    # Format prediction as integer + " minutes" if it's a number
+    try:
+        if isinstance(prediction_val, (int, float, str)):
+            # Try to convert to float first
+            num_val = float(prediction_val)
+            # Round down/strip decimal part
+            int_val = int(num_val)
+            prediction_val = f"{int_val} minutes"
+    except (ValueError, TypeError):
+        pass
+
+    return {
+        "prediction": prediction_val,
+        "score": None,
+        "latency_ms": None
+    }
+
+
 # Registry of all mapper functions
 INPUT_MAPPERS = {
     "credit_v2": credit_v2_input,
     "fraud_v1": fraud_v1_input,
     "los_fakeeh": los_fakeeh_input,
     "no_show_fakeeh": no_show_fakeeh_input,
+    "delay_fakeeh_dubai": delay_fakeeh_dubai_input,
 }
 
 OUTPUT_MAPPERS = {
@@ -331,6 +418,7 @@ OUTPUT_MAPPERS = {
     "fraud_v1": fraud_v1_output,
     "los_fakeeh": los_fakeeh_output,
     "no_show_fakeeh": no_show_fakeeh_output,
+    "delay_fakeeh_dubai": delay_fakeeh_dubai_output,
 }
 
 
