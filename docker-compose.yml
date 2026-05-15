@@ -1,41 +1,58 @@
 version: '3.8'
 
 services:
-  # ML Gateway with embedded OpenSearch
+  # ML Inference Gateway (with embedded OpenSearch for logging)
   gateway:
     build: .
     container_name: ml-gateway
-    ports:
-      - "8000:8000"  # Gateway API
-      - "9200:9200"  # OpenSearch REST API
-      - "9600:9600"  # OpenSearch performance analyzer
+    restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - GATEWAY_HOST=0.0.0.0
       - GATEWAY_PORT=8000
       - OPENSEARCH_HOST=localhost
       - OPENSEARCH_PORT=9200
-      - OPENSEARCH_USER=admin
-      - OPENSEARCH_PASSWORD=Adm!9Kq7Zx@42
       - OPENSEARCH_USE_SSL=false
       - OPENSEARCH_VERIFY_CERTS=false
+      # Set number of uvicorn workers (default 2)
+      - UVICORN_WORKERS=2
+    ports:
+      - "8000:8000"   # Gateway API
+      - "9200:9200"   # OpenSearch REST API
+      - "9600:9600"   # OpenSearch performance analyzer
     volumes:
+      # Live-reload config without rebuilding the image
       - ./config:/app/config
       - ./templates:/app/templates
+      # Mount local models so they can be updated without an image rebuild
+      - ./models/local-models:/app/models/local-models:ro
+      # Persist OpenSearch data across container restarts
       - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      # Allow enough time for cold model loading (Azure AutoML pickles can
+      # take 30-60 s on first deserialisation)
+      start_period: 120s
+      retries: 5
     networks:
       - gateway-network
 
-  # OpenSearch Dashboards (Web GUI)
+  # OpenSearch Dashboards (optional – provides a web UI for logs)
   opensearch-dashboards:
     image: opensearchproject/opensearch-dashboards:2.11.0
     container_name: opensearch-dashboards
+    restart: unless-stopped
     ports:
       - "5601:5601"
     environment:
       - OPENSEARCH_HOSTS=http://gateway:9200
       - HOME=/usr/share/opensearch-dashboards
     depends_on:
-      - gateway
+      gateway:
+        condition: service_healthy
     networks:
       - gateway-network
 

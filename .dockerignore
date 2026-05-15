@@ -1,0 +1,49 @@
+# Version control
+.git
+.gitignore
+
+# Python artifacts
+__pycache__
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info
+*.egg
+.eggs
+dist
+build
+
+# Virtual environments
+venv
+.venv
+env
+
+# Test artifacts
+.pytest_cache
+.coverage
+htmlcov
+*.test.py
+
+# Editor / OS
+.DS_Store
+.idea
+.vscode
+*.swp
+*.swo
+
+# Local development config (real .env is injected at runtime)
+.env
+.env.*
+
+# Logs
+logs/
+*.log
+
+# Notebooks and docs (not needed at runtime)
+*.ipynb
+*.md
+docs/
+
+# Large model files – mounted as a volume at runtime instead.
+# Remove these lines if you want models baked into the image.
+# models/local-models/

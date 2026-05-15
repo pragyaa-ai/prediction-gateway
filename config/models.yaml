@@ -30,3 +30,67 @@ delay_fakeeh_dubai:
   input_mapper: delay_fakeeh_dubai
   output_mapper: delay_fakeeh_dubai
   enabled: true
+
+# On-prem artifacts under models/local-models (see adapters/local_inference.py)
+cost_estimation_ksa_local:
+  provider: local_artifact
+  endpoint_url: ""
+  local_artifact_path: models/local-models/cost-estimation-ksa/model.joblib
+  local_artifact_format: joblib
+  local_model_kind: sklearn
+  auth_type: none
+  api_key: null
+  timeout_ms: 5000
+  version: "1.0-local"
+  input_mapper: cost_estimation_ksa
+  output_mapper: cost_estimation_ksa
+  enabled: true
+
+# Expects the 48 engineered feature columns as top-level keys in "inputs" (see bundle feature_names).
+no_show_fakeeh_ksa_local:
+  provider: local_artifact
+  endpoint_url: ""
+  local_artifact_path: models/local-models/no-show-ksa/best_noshow_model.pkl
+  local_artifact_format: pickle
+  local_model_kind: noshow_xgboost_bundle
+  auth_type: none
+  api_key: null
+  timeout_ms: 5000
+  version: "1.0-local"
+  input_mapper: no_show_bundle_local
+  output_mapper: no_show_bundle_local
+  enabled: true
+
+# Azure AutoML LOS model (local) – full on-disk pipeline, no cloud dependency.
+# Inputs: same fields as los_fakeeh_ksa (see adapters/mappers.py los_fakeeh_input).
+# Output: predicted LOS in days with category label (SHORT / MEDIUM / LONG).
+los_fakeeh_ksa_local:
+  provider: local_artifact
+  endpoint_url: ""
+  local_artifact_path: models/local-models/los_prediction_ksa/model.pkl
+  local_artifact_format: azure_automl_pickle
+  local_model_kind: azure_automl_pipeline
+  auth_type: none
+  api_key: null
+  timeout_ms: 30000
+  version: "1.0-local"
+  input_mapper: azure_automl_noop
+  output_mapper: los_local
+  enabled: true
+
+# Azure AutoML Delay Arrival model (local) – full on-disk pipeline, no cloud dependency.
+# Inputs: same 23-column schema as delay_fakeeh_dubai (see adapters/mappers.py delay_fakeeh_dubai_input).
+# Output: predicted delay in minutes.
+delay_fakeeh_ksa_local:
+  provider: local_artifact
+  endpoint_url: ""
+  local_artifact_path: models/local-models/Fakeeh-Delay-Arrival_ksa/model.pkl
+  local_artifact_format: azure_automl_pickle
+  local_model_kind: azure_automl_pipeline
+  auth_type: none
+  api_key: null
+  timeout_ms: 30000
+  version: "1.0-local"
+  input_mapper: azure_automl_noop
+  output_mapper: delay_local
+  enabled: true

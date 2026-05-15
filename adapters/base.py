@@ -139,13 +139,18 @@ class AWSSageMakerAdapter(BaseModelAdapter):
 # Adapter factory
 def get_adapter(provider: str) -> BaseModelAdapter:
     """Get adapter instance for provider"""
+    if provider == "local_artifact":
+        from adapters.local_inference import LocalArtifactAdapter
+
+        return LocalArtifactAdapter()
+
     adapters = {
         "azure_ml": AzureMLAdapter(),
         "aws_sagemaker": AWSSageMakerAdapter(),
     }
-    
+
     adapter = adapters.get(provider)
     if not adapter:
         raise ValueError(f"Unknown provider: {provider}")
-    
+
     return adapter

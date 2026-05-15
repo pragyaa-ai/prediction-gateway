@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 from typing import Optional, Any, Dict
 import uuid
@@ -42,7 +42,7 @@ class InferenceResponse(BaseModel):
 class ModelConfig(BaseModel):
     """Model configuration from YAML"""
     provider: str
-    endpoint_url: str
+    endpoint_url: str = ""
     auth_type: str = "none"
     api_key: Optional[str] = None
     timeout_ms: int = 3000
@@ -50,6 +50,24 @@ class ModelConfig(BaseModel):
     input_mapper: str
     output_mapper: str
     enabled: bool = True
+    # On-disk artifacts (provider: local_artifact)
+    local_artifact_path: Optional[str] = None
+    local_artifact_format: Optional[str] = None  # pickle | joblib
+    local_model_kind: Optional[str] = None  # sklearn | noshow_xgboost_bundle
+
+    @model_validator(mode="after")
+    def validate_provider_fields(self) -> "ModelConfig":
+        if self.provider == "local_artifact":
+            if not self.local_artifact_path:
+                raise ValueError("local_artifact_path is required when provider is 'local_artifact'")
+            if not self.local_artifact_format:
+                raise ValueError("local_artifact_format is required when provider is 'local_artifact'")
+            fmt = self.local_artifact_format.lower()
+            if fmt not in ("pickle", "joblib", "azure_automl_pickle"):
+                raise ValueError("local_artifact_format must be 'pickle', 'joblib', or 'azure_automl_pickle'")
+        elif not self.endpoint_url:
+            raise ValueError(f"endpoint_url is required for provider '{self.provider}'")
+        return self
 
 
 class PredictionLog(BaseModel):

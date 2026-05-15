@@ -404,6 +404,116 @@ def delay_fakeeh_dubai_output(response: Any) -> Dict[str, Any]:
     }
 
 
+# Column order must match models/local-models/cost-estimation-ksa/model.joblib training
+_COST_ESTIMATION_COLUMNS = (
+    "WEIGHT_IN_KG",
+    "HEIGHT_IN_CM",
+    "ICD_CODE",
+    "HEARTRATE",
+    "RESPIRATORYRATE",
+    "TEMPERATURE",
+    "TYPE_OF_PROCEDURE_CLINICALPROCEDURE",
+    "SUBCATEGORY_CLINICALPROCEDURE",
+    "NUMBER_OF_PROCEDURES",
+    "LENGTH_OF_STAY_DAYS",
+    "ROOM_TYPE",
+    "DISCHARGEDISPOSITION",
+    "BLOOD_PRESSURE_UPPER",
+    "BLOOD_PRESSURE_LOWER",
+    "SURGERY_NAME",
+    "ISCREDIT",
+    "LOS_days",
+    "AGE_GROUP",
+    "NUM_PRIMARY_DIAG",
+    "NUM_SECONDARY_DIAG",
+    "ICU_FLAG",
+    "IS_SURGERY",
+    "IS_FEMALE",
+    "BMI_CAT",
+    "IS_SELF_PAY",
+    "HAS_CARDIAC_PROC",
+)
+
+
+def cost_estimation_ksa_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Build one row for the on-disk cost estimation RandomForest (26 features)."""
+    row: Dict[str, Any] = {}
+    for col in _COST_ESTIMATION_COLUMNS:
+        val = inputs.get(col)
+        if val is None or val == "":
+            val = 0
+        row[col] = val
+    return {"_local_records": [row]}
+
+
+def cost_estimation_ksa_output(response: Dict[str, Any]) -> Dict[str, Any]:
+    pred = response.get("prediction")
+    try:
+        pred = float(pred)
+    except (TypeError, ValueError):
+        pass
+    return {"prediction": pred, "score": response.get("score")}
+
+
+def no_show_bundle_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Unused for noshow_xgboost_bundle (adapter reads inputs directly); required by registry."""
+    return {}
+
+
+def no_show_bundle_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Map raw classifier output to gateway fields (binary 0/1)."""
+    pred = response.get("prediction")
+    score = response.get("score")
+    if pred == 1:
+        label = "NO_SHOW"
+    elif pred == 0:
+        label = "SHOW"
+    else:
+        label = str(pred)
+    return {"prediction": label, "score": score, "no_show_probability": score}
+
+
+# ---------------------------------------------------------------------------
+# Azure AutoML local pipeline mappers (los_local / delay_local)
+# ---------------------------------------------------------------------------
+# These models take raw inputs as a pd.DataFrame row directly – no pre-mapping
+# needed before the pipeline's own DataTransformer.  Inputs are passed through
+# unchanged; the output is a numeric regression value.
+
+
+def azure_automl_noop_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Pass-through: the pipeline's DataTransformer handles all preprocessing."""
+    return inputs
+
+
+def los_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert raw predicted LOS (continuous days) to gateway response."""
+    pred = response.get("prediction")
+    try:
+        days = float(pred)
+        if days <= 1:
+            category = "SHORT"
+        elif days <= 3:
+            category = "MEDIUM"
+        else:
+            category = "LONG"
+        label = f"{round(days, 2)} days ({category})"
+    except (TypeError, ValueError):
+        label = str(pred)
+    return {"prediction": label, "score": response.get("score"), "los_days": pred}
+
+
+def delay_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert raw predicted delay (continuous minutes) to gateway response."""
+    pred = response.get("prediction")
+    try:
+        minutes = float(pred)
+        label = f"{int(minutes)} minutes"
+    except (TypeError, ValueError):
+        label = str(pred)
+    return {"prediction": label, "score": response.get("score"), "delay_minutes": pred}
+
+
 # Registry of all mapper functions
 INPUT_MAPPERS = {
     "credit_v2": credit_v2_input,
@@ -411,6 +521,9 @@ INPUT_MAPPERS = {
     "los_fakeeh": los_fakeeh_input,
     "no_show_fakeeh": no_show_fakeeh_input,
     "delay_fakeeh_dubai": delay_fakeeh_dubai_input,
+    "cost_estimation_ksa": cost_estimation_ksa_input,
+    "no_show_bundle_local": no_show_bundle_local_input,
+    "azure_automl_noop": azure_automl_noop_input,
 }
 
 OUTPUT_MAPPERS = {
@@ -419,6 +532,10 @@ OUTPUT_MAPPERS = {
     "los_fakeeh": los_fakeeh_output,
     "no_show_fakeeh": no_show_fakeeh_output,
     "delay_fakeeh_dubai": delay_fakeeh_dubai_output,
+    "cost_estimation_ksa": cost_estimation_ksa_output,
+    "no_show_bundle_local": no_show_bundle_local_output,
+    "los_local": los_local_output,
+    "delay_local": delay_local_output,
 }
 
 

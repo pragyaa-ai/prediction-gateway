@@ -1,198 +1,194 @@
 #!/bin/bash
+# Ubuntu Deployment Script for ML Inference Gateway
+# Run as a user with sudo privileges on a fresh Ubuntu 22.04+ VM.
+# Usage: bash ubuntu-deploy.sh
 
-# Ubuntu Deployment Script for ML Gateway
-# This script installs and configures the ML Gateway on Ubuntu
+set -euo pipefail
 
-# Remove set -e to preve# Configure firewall
-echo "🔥 Configuring firewall..."
-sudo ufw allow 8000/tcp
-sudo ufw allow 9200/tcp
-sudo ufw allow 22/tcp
-echo "y" | sudo ufw enable
+GATEWAY_DIR="/opt/ml-gateway"
+GATEWAY_USER="gateway"
+APP_PORT=8000
 
-# Health check
-echo "🏥 Running health checks..."
-sleep 10
+echo "=============================================="
+echo " ML Inference Gateway - Ubuntu Deploy Script"
+echo "=============================================="
+echo ""
 
-# Get server IP
-SERVER_IP=$(hostname -I | awk '{print $1}')
+# ---------------------------------------------------------------------------
+# 1. System packages
+# ---------------------------------------------------------------------------
+echo "[1/8] Updating system packages..."
+sudo apt-get update -y
+sudo apt-get upgrade -y
+sudo apt-get install -y \
+    curl wget gnupg software-properties-common \
+    python3 python3-venv python3-dev python3-pip \
+    build-essential libgomp1 git
 
-if curl -s http://localhost:8000/health > /dev/null; then
-    echo "✅ Gateway is running!"
-    echo "🌐 Gateway URL: http://$SERVER_IP:8000"
-    echo "🔍 OpenSearch URL: http://$SERVER_IP:9200"
-    echo "👨‍💼 Admin Panel: http://$SERVER_IP:8000/admin"
-else
-    echo "❌ Gateway health check failed - checking service status..."
-    sudo systemctl status ml-gateway --no-pager -l
-fiors
-# set -e
+# ---------------------------------------------------------------------------
+# 2. Create dedicated user and app directory
+# ---------------------------------------------------------------------------
+echo "[2/8] Creating gateway user and directory..."
+sudo useradd -r -m -s /bin/bash "$GATEWAY_USER" 2>/dev/null || true
+sudo mkdir -p "$GATEWAY_DIR"
 
-echo "🚀 ML Gateway Ubuntu Deployment"
-echo "================================"
-
-# Update system
-echo "📦 Updating system packages..."
-sudo apt update && sudo apt upgrade -y
-
-# Install Python and pip
-echo "🐍 Installing Python..."
-sudo apt install -y python3 python3-venv python3-dev python3-pip
-
-# Install system dependencies
-echo "🔧 Installing system dependencies..."
-sudo apt install -y curl wget gnupg software-properties-common
-
-# Install OpenSearch
-echo "🔍 Installing OpenSearch..."
-wget -qO - https://artifacts.opensearch.org/publickeys/opensearch.pgp | sudo apt-key add -
-echo "deb https://artifacts.opensearch.org/releases/bundle/opensearch/2.x/apt stable main" | sudo tee /etc/apt/sources.list.d/opensearch-2.x.list
-sudo apt update
-sudo apt install -y opensearch=2.11.0
-
-# Configure OpenSearch
-echo "⚙️ Configuring OpenSearch..."
-sudo sed -i 's/#cluster.name: my-application/cluster.name: ml-gateway-cluster/' /etc/opensearch/opensearch.yml
-sudo sed -i 's/#network.host: 192.168.0.1/network.host: 0.0.0.0/' /etc/opensearch/opensearch.yml
-sudo sed -i 's/#http.port: 9200/http.port: 9200/' /etc/opensearch/opensearch.yml
-sudo sed -i 's/#discovery.type: single-node/discovery.type: single-node/' /etc/opensearch/opensearch.yml
-
-# Skip OpenSearch security setup for now (can be done later)
-echo "🔐 Skipping OpenSearch security setup (will configure manually later)..."
-
-# Create gateway user and directory
-echo "👤 Creating gateway user..."
-sudo useradd -m -s /bin/bash gateway || true
-sudo mkdir -p /opt/ml-gateway
-sudo chown -R gateway:gateway /opt/ml-gateway
-
-# Clone or copy repository
-echo "📁 Setting up application directory..."
-# Check if we're in the repository directory
+# Copy the repository to the deployment directory
 if [ -f "main.py" ] && [ -f "requirements.txt" ]; then
-    echo "📋 Copying from current directory..."
-    sudo cp -r . /opt/ml-gateway/
+    echo "    Syncing from current directory..."
+    sudo rsync -a --delete \
+        --exclude='.git' \
+        --exclude='venv' \
+        --exclude='__pycache__' \
+        --exclude='*.pyc' \
+        . "$GATEWAY_DIR/"
 else
-    echo "📋 Cloning repository..."
-    sudo git clone https://github.com/pragyaa-ai/prediction-gateway.git /tmp/gateway-repo
-    sudo cp -r /tmp/gateway-repo/* /opt/ml-gateway/
-    sudo rm -rf /tmp/gateway-repo
+    echo "ERROR: Run this script from inside the prediction-gateway repository root."
+    exit 1
 fi
-sudo chown -R gateway:gateway /opt/ml-gateway
 
-# Install Python dependencies
-echo "📦 Installing Python dependencies..."
-cd /opt/ml-gateway
-sudo -u gateway python3 -m venv venv
-sudo -u gateway bash -c "source venv/bin/activate && pip install --upgrade pip"
-sudo -u gateway bash -c "source venv/bin/activate && pip install -r requirements.txt"
+sudo chown -R "$GATEWAY_USER:$GATEWAY_USER" "$GATEWAY_DIR"
 
-# Create systemd services
-echo "🔧 Creating systemd services..."
+# ---------------------------------------------------------------------------
+# 3. Python virtual environment + dependencies
+# ---------------------------------------------------------------------------
+echo "[3/8] Installing Python dependencies..."
+sudo -u "$GATEWAY_USER" python3 -m venv "$GATEWAY_DIR/venv"
+sudo -u "$GATEWAY_USER" bash -c "
+    source $GATEWAY_DIR/venv/bin/activate
+    pip install --upgrade pip wheel
+    pip install -r $GATEWAY_DIR/requirements.txt
+"
+echo "    Dependencies installed."
 
-# OpenSearch service
-sudo tee /etc/systemd/system/opensearch.service > /dev/null <<EOF
-[Unit]
-Description=OpenSearch
-Wants=network-online.target
-After=network-online.target
+# ---------------------------------------------------------------------------
+# 4. Environment file
+# ---------------------------------------------------------------------------
+echo "[4/8] Setting up environment file..."
+if [ ! -f "$GATEWAY_DIR/.env" ]; then
+    sudo -u "$GATEWAY_USER" cp "$GATEWAY_DIR/.env.example" "$GATEWAY_DIR/.env"
+    echo "    Created .env from template. Edit $GATEWAY_DIR/.env to set credentials."
+else
+    echo "    .env already exists – skipping."
+fi
 
-[Service]
-Type=simple
-User=opensearch
-Group=opensearch
-Environment=OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
-Environment=OPENSEARCH_PATH_CONF=/etc/opensearch
-ExecStart=/usr/share/opensearch/bin/opensearch
-LimitNOFILE=65536
-LimitNPROC=4096
-TimeoutStartSec=180
+# ---------------------------------------------------------------------------
+# 5. Smoke-test model loading (optional, non-fatal)
+# ---------------------------------------------------------------------------
+echo "[5/8] Running model smoke-test (non-fatal)..."
+sudo -u "$GATEWAY_USER" bash -c "
+    source $GATEWAY_DIR/venv/bin/activate
+    cd $GATEWAY_DIR
+    python3 -c \"
+import sys, traceback
+sys.path.insert(0, '.')
+try:
+    from core.registry import ModelRegistry
+    r = ModelRegistry()
+    print('    ModelRegistry initialised – models YAML loaded OK.')
+except Exception as e:
+    print('    WARNING: smoke-test raised:', e)
+    traceback.print_exc()
+\"
+" || true
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# ---------------------------------------------------------------------------
+# 6. systemd service (gateway only – OpenSearch is optional)
+# ---------------------------------------------------------------------------
+echo "[6/8] Creating systemd service..."
 
-# Gateway service
 sudo tee /etc/systemd/system/ml-gateway.service > /dev/null <<EOF
 [Unit]
 Description=ML Inference Gateway
-After=network.target opensearch.service
-Requires=opensearch.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=gateway
-WorkingDirectory=/opt/ml-gateway
-Environment=OPENSEARCH_HOST=localhost
-Environment=OPENSEARCH_PORT=9200
-Environment=OPENSEARCH_USER=admin
-Environment=OPENSEARCH_PASSWORD=Admin@123
-Environment=OPENSEARCH_USE_SSL=false
-Environment=OPENSEARCH_VERIFY_CERTS=false
+User=$GATEWAY_USER
+Group=$GATEWAY_USER
+WorkingDirectory=$GATEWAY_DIR
+EnvironmentFile=-$GATEWAY_DIR/.env
+
+# Default env vars – overridden by .env when present
 Environment=GATEWAY_HOST=0.0.0.0
-Environment=GATEWAY_PORT=8000
-ExecStart=/opt/ml-gateway/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+Environment=GATEWAY_PORT=$APP_PORT
+Environment=PYTHONUNBUFFERED=1
+
+# Give enough time for local models to load before uvicorn starts accepting
+# (azure_automl_pickle deserialization can take 20-40s on first request)
+ExecStartPre=/bin/sleep 2
+ExecStart=$GATEWAY_DIR/venv/bin/uvicorn main:app \
+    --host 0.0.0.0 \
+    --port $APP_PORT \
+    --workers 2 \
+    --log-level info \
+    --access-log
+
 Restart=always
-RestartSec=5
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ml-gateway
+
+# Allow enough open file descriptors for model files
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Start services
-echo "🚀 Starting services..."
 sudo systemctl daemon-reload
-sudo systemctl enable opensearch
 sudo systemctl enable ml-gateway
 
-echo "🔄 Starting OpenSearch..."
-sudo systemctl start opensearch
+# ---------------------------------------------------------------------------
+# 7. Firewall
+# ---------------------------------------------------------------------------
+echo "[7/8] Configuring firewall..."
+# Allow SSH so we don't lock ourselves out
+sudo ufw allow 22/tcp
+sudo ufw allow "$APP_PORT/tcp"
+# Enable non-interactively
+echo "y" | sudo ufw enable || true
+sudo ufw status
 
-# Wait for OpenSearch
-echo "⏳ Waiting for OpenSearch to be ready..."
-sleep 30
-for i in {1..10}; do
-    if curl -s http://localhost:9200/_cluster/health > /dev/null; then
-        echo "✅ OpenSearch is ready!"
-        break
+# ---------------------------------------------------------------------------
+# 8. Start and health-check
+# ---------------------------------------------------------------------------
+echo "[8/8] Starting ml-gateway service..."
+sudo systemctl start ml-gateway
+
+echo ""
+echo "Waiting for gateway to become healthy (up to 90 s)..."
+SERVER_IP=$(hostname -I | awk '{print $1}')
+for i in $(seq 1 18); do
+    if curl -sf "http://localhost:$APP_PORT/health" > /dev/null 2>&1; then
+        echo ""
+        echo "=============================================="
+        echo " Deployment successful!"
+        echo "=============================================="
+        echo " Gateway API  : http://$SERVER_IP:$APP_PORT"
+        echo " Health check : http://$SERVER_IP:$APP_PORT/health"
+        echo " API docs     : http://$SERVER_IP:$APP_PORT/docs"
+        echo " Admin UI     : http://$SERVER_IP:$APP_PORT/admin"
+        echo "=============================================="
+        echo ""
+        echo "Useful commands:"
+        echo "  sudo systemctl status  ml-gateway"
+        echo "  sudo systemctl restart ml-gateway"
+        echo "  sudo journalctl -u ml-gateway -f"
+        echo "  sudo journalctl -u ml-gateway --since '5 min ago'"
+        echo ""
+        echo "To update the app:"
+        echo "  1. rsync your new code to $GATEWAY_DIR"
+        echo "  2. sudo systemctl restart ml-gateway"
+        exit 0
     fi
-    echo "Waiting... ($i/10)"
+    echo "  ($((i * 5))s) not ready yet..."
     sleep 5
 done
 
-echo "🔄 Starting ML Gateway..."
-sudo systemctl start ml-gateway
-
-# Configure firewall
-echo "🔥 Configuring firewall..."
-sudo ufw allow 8000/tcp
-sudo ufw allow 9200/tcp
-sudo ufw allow 5601/tcp  # Optional: OpenSearch Dashboards
-sudo ufw --force enable
-
-# Health check
-echo "🏥 Running health checks..."
-sleep 10
-
-if curl -s http://localhost:8000/health > /dev/null; then
-    echo "✅ Gateway is running!"
-    echo "🌐 Gateway URL: http://$(hostname -I | awk '{print $1}'):8000"
-    echo "🔍 OpenSearch URL: http://$(hostname -I | awk '{print $1}'):9200"
-    echo "� Dashboards URL: http://$(hostname -I | awk '{print $1}'):5601"
-    echo "�👨‍💼 Admin Panel: http://$(hostname -I | awk '{print $1}'):8000/admin"
-else
-    echo "❌ Gateway health check failed"
-fi
-
 echo ""
-echo "📋 Service Management:"
-echo "sudo systemctl status opensearch"
-echo "sudo systemctl status ml-gateway"
-echo "sudo systemctl restart ml-gateway"
-echo "sudo journalctl -u ml-gateway -f"
-echo "sudo journalctl -u opensearch -f"
-echo ""
-echo "🔧 Troubleshooting:"
-echo "sudo systemctl stop ml-gateway && sudo -u gateway bash -c 'cd /opt/ml-gateway && source venv/bin/activate && python3 main.py'"
-echo ""
-echo "🎉 Deployment complete!"
+echo "WARNING: Health check did not pass within 90 s."
+echo "Check logs with: sudo journalctl -u ml-gateway -n 100 --no-pager"
+sudo systemctl status ml-gateway --no-pager -l || true
+exit 1
