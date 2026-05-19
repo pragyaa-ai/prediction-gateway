@@ -1,0 +1,5 @@
+# Large ML artifacts (GitHub file limit is 100 MB without LFS)
+models/local-models/**/*.pkl filter=lfs diff=lfs merge=lfs -text
+models/local-models/**/*.joblib filter=lfs diff=lfs merge=lfs -text
+models/local-models/**/*.json filter=lfs diff=lfs merge=lfs -text
+models/local-models/** filter=lfs diff=lfs merge=lfs -text
