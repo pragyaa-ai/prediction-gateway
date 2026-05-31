@@ -10,9 +10,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-import ast
-import csv
-import io
 
 import numpy as np
 
@@ -350,45 +347,14 @@ def format_noshow_sagemaker_prediction(
     probabilities: Sequence[float],
     class_labels: Sequence[str] = NOSHOW_CLASS_LABELS,
 ) -> str:
-    """
-    SageMaker Canvas CSV line, e.g.
-    Show,0.659...,"[0.659..., 0.340...]","['Show', 'No Show']"
-    """
-    labels = list(class_labels)
-    idx = labels.index(predicted_label) if predicted_label in labels else 0
-    pred_score = float(probabilities[idx])
-    proba_inner = ", ".join(str(float(p)) for p in probabilities)
-    proba_str = f"[{proba_inner}]"
-    labels_str = str(labels)
-    return f'{predicted_label},{pred_score},"{proba_str}","{labels_str}"\n'
+    """Backward-compatible alias for SageMaker classification CSV format."""
+    from adapters.sagemaker_format import format_classification_prediction
+
+    return format_classification_prediction(predicted_label, probabilities, class_labels)
 
 
 def parse_noshow_sagemaker_prediction(text: str) -> Optional[Dict[str, Any]]:
-    """Parse SageMaker CSV prediction string into structured fields."""
-    if not text or not isinstance(text, str) or "," not in text:
-        return None
-    try:
-        row = next(csv.reader(io.StringIO(text.strip())))
-        if len(row) < 2:
-            return None
-        label = row[0]
-        pred_score = float(row[1])
-        probabilities = ast.literal_eval(row[2]) if len(row) > 2 else []
-        class_labels = ast.literal_eval(row[3]) if len(row) > 3 else list(NOSHOW_CLASS_LABELS)
-        no_show_prob = None
-        if probabilities and class_labels:
-            if "No Show" in class_labels:
-                no_show_prob = float(probabilities[class_labels.index("No Show")])
-            elif len(probabilities) > 1:
-                no_show_prob = float(probabilities[1])
-        formatted = text if text.endswith("\n") else f"{text.strip()}\n"
-        return {
-            "prediction": formatted,
-            "predicted_label": label,
-            "score": pred_score,
-            "no_show_probability": no_show_prob,
-            "probabilities": [float(p) for p in probabilities] if probabilities else None,
-            "class_labels": list(class_labels) if class_labels else list(NOSHOW_CLASS_LABELS),
-        }
-    except (ValueError, SyntaxError, StopIteration):
-        return None
+    """Backward-compatible alias for SageMaker classification CSV parser."""
+    from adapters.sagemaker_format import parse_classification_prediction
+
+    return parse_classification_prediction(text)

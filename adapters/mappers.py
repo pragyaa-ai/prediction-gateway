@@ -176,48 +176,69 @@ def los_fakeeh_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 def los_fakeeh_output(response: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform Azure ML LOS response to standardized gateway format
-    
-    Assumes Azure returns predicted length of stay category and confidence
-    Example: {"prediction": "LONG", "score": 0.85} or {"result": ["LONG", 0.85]}
+    Transform Azure ML / SageMaker LOS response to standardized gateway format.
     """
-    # Handle different Azure response formats
+    from adapters.sagemaker_format import parse_sagemaker_prediction, regression_output_from_response
+
+    if isinstance(response.get("prediction"), str):
+        parsed = parse_sagemaker_prediction(response["prediction"])
+        if parsed:
+            return parsed
+
     if "prediction" in response:
-        return {
-            "prediction": response["prediction"],
-            "score": response.get("score"),
-            "los_category": response.get("prediction"),
-            "confidence": response.get("score")
-        }
+        try:
+            float(response["prediction"])
+            return regression_output_from_response(
+                response,
+                extra={"los_category": response.get("prediction")},
+            )
+        except (TypeError, ValueError):
+            return {
+                "prediction": response["prediction"],
+                "score": response.get("score"),
+                "los_category": response.get("prediction"),
+                "confidence": response.get("score"),
+            }
     elif "result" in response:
         result = response["result"]
         if isinstance(result, list) and len(result) > 0:
-            return {
-                "prediction": result[0],
-                "score": result[1] if len(result) > 1 else None,
-                "los_category": result[0],
-                "confidence": result[1] if len(result) > 1 else None
-            }
+            try:
+                float(result[0])
+                return regression_output_from_response(
+                    {"prediction": result[0], "score": result[1] if len(result) > 1 else None},
+                    extra={"los_category": result[0]},
+                )
+            except (TypeError, ValueError):
+                return {
+                    "prediction": result[0],
+                    "score": result[1] if len(result) > 1 else None,
+                    "los_category": result[0],
+                    "confidence": result[1] if len(result) > 1 else None,
+                }
     elif "Results" in response:
-        # Handle Azure ML Studio format
         results = response["Results"]
         if isinstance(results, dict):
-            # Extract the first result
             first_key = list(results.keys())[0] if results else None
             if first_key and isinstance(results[first_key], dict):
                 values = results[first_key].get("value", {}).get("Values", [[]])[0]
                 if len(values) > 0:
-                    return {
-                        "prediction": values[-1] if values else "UNKNOWN",
-                        "score": None,
-                        "los_category": values[-1] if values else "UNKNOWN"
-                    }
-    
-    # Fallback - return as-is with best guess
+                    raw_val = values[-1]
+                    try:
+                        return regression_output_from_response(
+                            {"prediction": raw_val, "score": None},
+                            extra={"los_category": raw_val},
+                        )
+                    except (TypeError, ValueError):
+                        return {
+                            "prediction": raw_val,
+                            "score": None,
+                            "los_category": raw_val,
+                        }
+
     return {
         "prediction": response.get("prediction", str(response)),
         "score": response.get("score"),
-        "los_category": response.get("prediction", "UNKNOWN")
+        "los_category": response.get("prediction", "UNKNOWN"),
     }
 
 
@@ -392,55 +413,48 @@ def delay_fakeeh_dubai_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 def delay_fakeeh_dubai_output(response: Any) -> Dict[str, Any]:
     """
-    Transform Azure ML delay prediction response to standardized gateway format
-
-    Assumes Azure returns delay prediction and confidence score
-    Example: {"prediction": "ON_TIME", "score": 0.75} or {"result": ["DELAYED", 0.85]}
+    Transform Azure ML delay prediction response to SageMaker CSV format.
     """
+    from adapters.sagemaker_format import parse_sagemaker_prediction, regression_output_from_response
+
     prediction_val = None
-    
-    # If response is a list, handle it
-    if isinstance(response, list):
+    score = None
+
+    if isinstance(response, str):
+        parsed = parse_sagemaker_prediction(response)
+        if parsed:
+            return parsed
+        prediction_val = response
+    elif isinstance(response, list):
         if len(response) > 0:
             val = response[0]
+            if isinstance(val, str):
+                parsed = parse_sagemaker_prediction(val)
+                if parsed:
+                    return parsed
             if isinstance(val, (list, dict)):
-                # Nested list or dict from Azure
                 if isinstance(val, list) and len(val) > 0:
                     prediction_val = val[0]
                 elif isinstance(val, dict):
                     prediction_val = val.get("prediction", val.get("result", str(val)))
+                    score = val.get("score", val.get("probability", val.get("confidence")))
             else:
                 prediction_val = val
-    
-    # Handle dictionary response
     elif isinstance(response, dict):
-        prediction_val = response.get("prediction", response.get("result", str(response)))
-    
+        raw_prediction = response.get("prediction", response.get("result"))
+        if isinstance(raw_prediction, str):
+            parsed = parse_sagemaker_prediction(raw_prediction)
+            if parsed:
+                return parsed
+        prediction_val = raw_prediction if raw_prediction is not None else str(response)
+        score = response.get("score", response.get("probability", response.get("confidence")))
     else:
-        # Final fallback for any other type
         prediction_val = str(response)
 
-    # Format prediction as integer + " minutes" if it's a number
-    try:
-        if isinstance(prediction_val, (int, float, str)):
-            # Try to convert to float first
-            num_val = float(prediction_val)
-            # Round down/strip decimal part
-            int_val = int(num_val)
-            prediction_val = f"{int_val} minutes"
-    except (ValueError, TypeError):
-        pass
-
-    score = None
-    if isinstance(response, dict):
-        score = response.get("score", response.get("probability", response.get("confidence")))
-
-    return {
-        "prediction": prediction_val,
-        "score": score,
-        "probability": score,
-        "latency_ms": None,
-    }
+    return regression_output_from_response(
+        {"prediction": prediction_val, "score": score},
+        extra={"delay_minutes": prediction_val, "latency_ms": None},
+    )
 
 
 # Column order must match models/local-models/cost-estimation-ksa/model.joblib training
@@ -511,12 +525,9 @@ def cost_estimation_ksa_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def cost_estimation_ksa_output(response: Dict[str, Any]) -> Dict[str, Any]:
-    pred = response.get("prediction")
-    try:
-        pred = float(pred)
-    except (TypeError, ValueError):
-        pass
-    return {"prediction": pred, "score": response.get("score")}
+    from adapters.sagemaker_format import regression_output_from_response
+
+    return regression_output_from_response(response, extra={"cost_estimate": response.get("prediction")})
 
 
 def no_show_bundle_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -565,31 +576,17 @@ def azure_automl_noop_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def los_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert raw predicted LOS (continuous days) to gateway response."""
-    pred = response.get("prediction")
-    try:
-        days = float(pred)
-        if days <= 1:
-            category = "SHORT"
-        elif days <= 3:
-            category = "MEDIUM"
-        else:
-            category = "LONG"
-        label = f"{round(days, 2)} days ({category})"
-    except (TypeError, ValueError):
-        label = str(pred)
-    return {"prediction": label, "score": response.get("score"), "los_days": pred}
+    """Convert predicted LOS (days) to SageMaker CSV format."""
+    from adapters.sagemaker_format import regression_output_from_response
+
+    return regression_output_from_response(response, extra={"los_days": response.get("prediction")})
 
 
 def delay_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert raw predicted delay (continuous minutes) to gateway response."""
-    pred = response.get("prediction")
-    try:
-        minutes = float(pred)
-        label = f"{int(minutes)} minutes"
-    except (TypeError, ValueError):
-        label = str(pred)
-    return {"prediction": label, "score": response.get("score"), "delay_minutes": pred}
+    """Convert predicted delay (minutes) to SageMaker CSV format."""
+    from adapters.sagemaker_format import regression_output_from_response
+
+    return regression_output_from_response(response, extra={"delay_minutes": response.get("prediction")})
 
 
 # Registry of all mapper functions
