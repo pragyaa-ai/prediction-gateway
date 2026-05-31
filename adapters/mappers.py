@@ -318,6 +318,13 @@ def no_show_fakeeh_output(response: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def delay_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """Map raw / integration appointment JSON to delay AutoML pipeline columns."""
+    from adapters.delay_features import engineer_delay_features
+
+    return engineer_delay_features(inputs)
+
+
 def delay_fakeeh_dubai_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
     """
     Transform gateway inputs to Azure ML format for Delay Prediction model - Fakeeh Dubai
@@ -435,14 +442,39 @@ _COST_ESTIMATION_COLUMNS = (
 )
 
 
+def _coerce_cost_feature(val: Any) -> float:
+    """Coerce a cost-model feature to float; missing/invalid values become 0."""
+    if val is None:
+        return 0.0
+    if isinstance(val, bool):
+        return 1.0 if val else 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    if isinstance(val, str):
+        s = val.strip()
+        if not s:
+            return 0.0
+        try:
+            return float(s)
+        except ValueError:
+            return 0.0
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def cost_estimation_ksa_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """Build one row for the on-disk cost estimation RandomForest (26 features)."""
+    """
+    Build one row for the on-disk cost estimation RandomForest (26 features).
+
+    Accepts any subset of the 26 fields; anything not sent defaults to 0.
+    Non-numeric strings (e.g. ICD codes, room types) are treated as 0 because
+    the trained model expects numeric columns only.
+    """
     row: Dict[str, Any] = {}
     for col in _COST_ESTIMATION_COLUMNS:
-        val = inputs.get(col)
-        if val is None or val == "":
-            val = 0
-        row[col] = val
+        row[col] = _coerce_cost_feature(inputs.get(col))
     return {"_local_records": [row]}
 
 
@@ -456,8 +488,10 @@ def cost_estimation_ksa_output(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def no_show_bundle_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """Unused for noshow_xgboost_bundle (adapter reads inputs directly); required by registry."""
-    return {}
+    """Normalize raw / SageMaker-style inputs; engineering happens in local_inference."""
+    from adapters.noshow_features import normalize_noshow_inputs
+
+    return normalize_noshow_inputs(inputs)
 
 
 def no_show_bundle_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
@@ -524,6 +558,7 @@ INPUT_MAPPERS = {
     "cost_estimation_ksa": cost_estimation_ksa_input,
     "no_show_bundle_local": no_show_bundle_local_input,
     "azure_automl_noop": azure_automl_noop_input,
+    "delay_local": delay_local_input,
 }
 
 OUTPUT_MAPPERS = {

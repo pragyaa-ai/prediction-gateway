@@ -88,6 +88,6 @@ delay_fakeeh_ksa_local:
   api_key: null
   timeout_ms: 30000
   version: "1.0-local"
-  input_mapper: azure_automl_noop
+  input_mapper: delay_local
   output_mapper: delay_local
   enabled: true

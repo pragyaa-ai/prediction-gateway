@@ -143,9 +143,12 @@ def _automl_pipeline_predict(model: Any, inputs: Dict[str, Any]) -> Dict[str, An
 
 
 def _noshow_bundle_predict(bundle: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
+    from adapters.noshow_features import engineer_noshow_features
+
     clf = bundle["model"]
     feature_names = bundle["feature_names"]
-    row = [_coerce_float(inputs.get(name)) for name in feature_names]
+    row_dict = engineer_noshow_features(inputs, bundle)
+    row = [row_dict.get(name, 0.0) for name in feature_names]
     X = np.array([row], dtype=np.float32)
     pred = int(clf.predict(X)[0])
     score = None
@@ -173,8 +176,9 @@ class LocalArtifactAdapter(BaseModelAdapter):
                 raise ValueError("noshow_xgboost_bundle expects a pickle dict with 'model' and 'feature_names'")
             raw = await asyncio.to_thread(_noshow_bundle_predict, artifact, request.inputs)
         elif kind == "azure_automl_pipeline":
-            # Azure AutoML RegressionPipeline – inputs fed as a pd.DataFrame row
-            raw = await asyncio.to_thread(_automl_pipeline_predict, artifact, request.inputs)
+            input_mapper = get_input_mapper(config.input_mapper)
+            mapped = input_mapper(request.inputs)
+            raw = await asyncio.to_thread(_automl_pipeline_predict, artifact, mapped)
         else:
             input_mapper = get_input_mapper(config.input_mapper)
             payload = input_mapper(request.inputs)
