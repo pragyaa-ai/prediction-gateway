@@ -7,6 +7,10 @@ class Settings(BaseSettings):
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
     
+    # Local on-disk models (see config/models.yaml local_artifact_path)
+    # Override when models live outside the repo, e.g. /opt/ml-models
+    local_models_dir: Optional[str] = None
+
     # OpenSearch
     opensearch_host: str = "localhost"
     opensearch_port: int = 9200

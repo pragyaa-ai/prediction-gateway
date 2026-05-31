@@ -15,12 +15,20 @@ import pandas as pd
 
 from adapters.base import BaseModelAdapter
 from adapters.mappers import get_input_mapper, get_output_mapper
+from config.paths import DEFAULT_LOCAL_MODELS_DIR, PROJECT_ROOT
+from config.settings import settings
 from models.schemas import InferenceRequest, InferenceResponse, ModelConfig
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 _locks: Dict[str, Lock] = {}
 _cache: Dict[str, Tuple[float, Any]] = {}
+
+
+def _local_models_base() -> Path:
+    """Directory containing on-disk model folders (override via LOCAL_MODELS_DIR in .env)."""
+    if settings.local_models_dir:
+        p = Path(settings.local_models_dir)
+        return p if p.is_absolute() else PROJECT_ROOT / p
+    return DEFAULT_LOCAL_MODELS_DIR
 
 
 def _artifact_lock(key: str) -> Lock:
@@ -30,14 +38,48 @@ def _artifact_lock(key: str) -> Lock:
 
 
 def _resolve_artifact_path(rel: str) -> Path:
+    """
+    Resolve local_artifact_path from config/models.yaml.
+
+    Supported forms:
+      - Absolute: /opt/ml-models/los/model.pkl
+      - Relative to LOCAL_MODELS_DIR: cost-estimation-ksa/model.joblib
+      - Legacy repo-relative: models/local-models/los_prediction_ksa/model.pkl
+    """
+    raw = rel.replace("\\", "/")
     p = Path(rel)
-    return p if p.is_absolute() else PROJECT_ROOT / p
+
+    if p.is_absolute():
+        return p
+
+    base = _local_models_base()
+    candidates: list[Path] = []
+
+    if raw.startswith("models/local-models/"):
+        candidates.append(base / raw[len("models/local-models/"):])
+    candidates.append(base / raw)
+    candidates.append(PROJECT_ROOT / raw)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.exists():
+            return candidate
+
+    tried = "\n  ".join(str(c) for c in candidates)
+    raise FileNotFoundError(
+        f"Local model artifact not found for '{rel}'.\n"
+        f"  LOCAL_MODELS_DIR={base}\n"
+        f"  PROJECT_ROOT={PROJECT_ROOT}\n"
+        f"  Tried:\n  {tried}"
+    )
 
 
 def _load_artifact(config: ModelConfig) -> Any:
     path = _resolve_artifact_path(config.local_artifact_path)  # type: ignore[arg-type]
-    if not path.exists():
-        raise FileNotFoundError(f"Local model artifact not found: {path}")
     fmt = (config.local_artifact_format or "pickle").lower()
     mtime = path.stat().st_mtime
     key = str(path.resolve())

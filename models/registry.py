@@ -1,14 +1,19 @@
 import yaml
 from pathlib import Path
 from typing import Dict, Optional
+from config.paths import DEFAULT_MODELS_CONFIG, PROJECT_ROOT
 from models.schemas import ModelConfig
 
 
 class ModelRegistry:
     """Loads and manages model configurations from YAML"""
     
-    def __init__(self, config_path: str = "config/models.yaml"):
-        self.config_path = Path(config_path)
+    def __init__(self, config_path: str | Path | None = None):
+        if config_path is None:
+            self.config_path = DEFAULT_MODELS_CONFIG
+        else:
+            p = Path(config_path)
+            self.config_path = p if p.is_absolute() else PROJECT_ROOT / p
         self._models: Dict[str, ModelConfig] = {}
         self.load_models()
     

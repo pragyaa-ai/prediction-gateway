@@ -157,22 +157,40 @@ _AZUREML_MODULES = [
 
 
 def _make_auto_stub_module(mod_name: str) -> types.ModuleType:
-    """Return a module whose __getattr__ creates generic stub classes on demand."""
+    """Return a module whose __getattr__ creates sklearn-compatible stub classes on demand."""
+    from sklearn.base import BaseEstimator, RegressorMixin, TransformerMixin
+
+    def _stub_bases(name: str) -> tuple[type, ...]:
+        if name in (
+            "PreFittedSoftVotingRegressor",
+            "XGBoostRegressor",
+            "RegressionPipeline",
+        ) or "Regressor" in name:
+            return (BaseEstimator, RegressorMixin)
+        return (BaseEstimator, TransformerMixin)
+
+    def _stub_methods(name: str) -> dict[str, Any]:
+        methods: dict[str, Any] = {
+            "__module__": mod_name,
+            "__setstate__": lambda self, d: self.__dict__.update(d),
+            "_wrap_in_lst": staticmethod(
+                lambda x: [x] if not isinstance(x, list) else x
+            ),
+            "fit": lambda self, *a, **kw: self,
+            "__sklearn_is_fitted__": lambda self: True,
+        }
+        if name in (
+            "PreFittedSoftVotingRegressor",
+            "XGBoostRegressor",
+            "RegressionPipeline",
+        ) or "Regressor" in name:
+            methods["predict"] = lambda self, X: np.asarray(X)
+        else:
+            methods["transform"] = lambda self, X: X
+        return methods
 
     def _getattr(name: str) -> type:
-        stub = type(
-            name,
-            (),
-            {
-                "__module__": mod_name,
-                "__setstate__": lambda self, d: self.__dict__.update(d),
-                # Used as CountVectorizer tokenizer in some Azure AutoML pipelines
-                "_wrap_in_lst": staticmethod(lambda x: [x] if not isinstance(x, list) else x),
-                # Make sklearn check_is_fitted / Pipeline happy
-                "fit": lambda self, *a, **kw: self,
-                "__sklearn_is_fitted__": lambda self: True,
-            },
-        )
+        stub = type(name, _stub_bases(name), _stub_methods(name))
         setattr(sys.modules[mod_name], name, stub)
         return stub
 
@@ -447,6 +465,14 @@ def _patch_loaded_model(obj: Any) -> None:
         type(obj).predict = _xgboost_wrapper_predict  # type: ignore[attr-defined]
 
     elif cls_name == "PreFittedSoftVotingRegressor":
+        from sklearn.base import BaseEstimator, RegressorMixin
+
+        if not isinstance(obj, BaseEstimator):
+            obj.__class__ = type(
+                cls_name,
+                (BaseEstimator, RegressorMixin, type(obj)),
+                {},
+            )
         type(obj).predict = _voting_predict  # type: ignore[attr-defined]
         ens = getattr(obj, "_wrappedEnsemble", None)
         if ens and hasattr(ens, "estimators_"):
