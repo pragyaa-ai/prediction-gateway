@@ -1,4 +1,20 @@
-from typing import Dict, Any
+from typing import Dict, Any, Callable
+
+
+def _standardize_probability(out: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure mapper output exposes both score and probability when available."""
+    if out.get("probability") is not None:
+        if out.get("score") is None:
+            out["score"] = out["probability"]
+        return out
+    for key in ("no_show_probability", "score", "confidence"):
+        val = out.get(key)
+        if val is not None:
+            out["probability"] = val
+            if out.get("score") is None:
+                out["score"] = val
+            break
+    return out
 
 
 def credit_v2_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
@@ -278,43 +294,54 @@ def no_show_fakeeh_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 def no_show_fakeeh_output(response: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Transform AWS SageMaker No-Show response to standardized gateway format
-    
-    Assumes SageMaker returns prediction probability and classification
-    Example: {"predictions": [{"score": 0.85, "predicted_label": "NO_SHOW"}]}
+    Transform AWS SageMaker No-Show response to standardized gateway format.
+
+    SageMaker Canvas CSV example:
+    Show,0.659...,"[0.659..., 0.340...]","['Show', 'No Show']"
     """
-    # Handle different SageMaker response formats
+    from adapters.noshow_features import parse_noshow_sagemaker_prediction
+
     if "predictions" in response:
         predictions = response["predictions"]
         if isinstance(predictions, list) and len(predictions) > 0:
             pred = predictions[0]
+            if isinstance(pred, str):
+                parsed = parse_noshow_sagemaker_prediction(pred)
+                if parsed:
+                    return parsed
             if isinstance(pred, dict):
+                raw_prediction = pred.get("prediction", pred.get("predicted_label"))
+                if isinstance(raw_prediction, str):
+                    parsed = parse_noshow_sagemaker_prediction(raw_prediction)
+                    if parsed:
+                        return parsed
                 return {
                     "prediction": pred.get("predicted_label", pred.get("prediction", "UNKNOWN")),
                     "score": pred.get("score", pred.get("probability")),
-                    "no_show_probability": pred.get("score", pred.get("probability"))
+                    "no_show_probability": pred.get("score", pred.get("probability")),
                 }
-            else:
-                # Simple prediction value
-                return {
-                    "prediction": str(pred),
-                    "score": None,
-                    "no_show_probability": None
-                }
-    
-    # Handle single prediction format
+            return {
+                "prediction": str(pred),
+                "score": None,
+                "no_show_probability": None,
+            }
+
     if "prediction" in response:
+        raw_prediction = response["prediction"]
+        if isinstance(raw_prediction, str):
+            parsed = parse_noshow_sagemaker_prediction(raw_prediction)
+            if parsed:
+                return parsed
         return {
-            "prediction": response["prediction"],
+            "prediction": raw_prediction,
             "score": response.get("score", response.get("probability")),
-            "no_show_probability": response.get("score", response.get("probability"))
+            "no_show_probability": response.get("score", response.get("probability")),
         }
-    
-    # Fallback - return as-is
+
     return {
         "prediction": str(response),
         "score": None,
-        "no_show_probability": None
+        "no_show_probability": None,
     }
 
 
@@ -404,10 +431,15 @@ def delay_fakeeh_dubai_output(response: Any) -> Dict[str, Any]:
     except (ValueError, TypeError):
         pass
 
+    score = None
+    if isinstance(response, dict):
+        score = response.get("score", response.get("probability", response.get("confidence")))
+
     return {
         "prediction": prediction_val,
-        "score": None,
-        "latency_ms": None
+        "score": score,
+        "probability": score,
+        "latency_ms": None,
     }
 
 
@@ -495,16 +527,28 @@ def no_show_bundle_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def no_show_bundle_local_output(response: Dict[str, Any]) -> Dict[str, Any]:
-    """Map raw classifier output to gateway fields (binary 0/1)."""
-    pred = response.get("prediction")
-    score = response.get("score")
-    if pred == 1:
-        label = "NO_SHOW"
-    elif pred == 0:
-        label = "SHOW"
+    """Map classifier output to SageMaker Canvas CSV prediction string."""
+    from adapters.noshow_features import format_noshow_sagemaker_prediction, noshow_class_label
+
+    predicted_label = response.get("predicted_label")
+    probabilities = response.get("probabilities")
+    class_labels = response.get("class_labels")
+
+    if predicted_label is None:
+        predicted_label = noshow_class_label(response.get("prediction"))
+
+    if probabilities and predicted_label:
+        labels = tuple(class_labels) if class_labels else ("Show", "No Show")
+        prediction = format_noshow_sagemaker_prediction(predicted_label, probabilities, labels)
     else:
-        label = str(pred)
-    return {"prediction": label, "score": score, "no_show_probability": score}
+        prediction = str(predicted_label or response.get("prediction"))
+
+    no_show_prob = response.get("no_show_probability", response.get("score"))
+    return {
+        "prediction": prediction,
+        "score": no_show_prob,
+        "no_show_probability": no_show_prob,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -582,9 +626,13 @@ def get_input_mapper(mapper_name: str):
     return mapper
 
 
-def get_output_mapper(mapper_name: str):
-    """Get output mapper function by name"""
+def get_output_mapper(mapper_name: str) -> Callable[[Dict[str, Any]], Dict[str, Any]]:
+    """Get output mapper function by name (always adds probability when score exists)."""
     mapper = OUTPUT_MAPPERS.get(mapper_name)
     if not mapper:
         raise ValueError(f"Output mapper '{mapper_name}' not found")
-    return mapper
+
+    def wrapped(response: Dict[str, Any]) -> Dict[str, Any]:
+        return _standardize_probability(mapper(response))
+
+    return wrapped

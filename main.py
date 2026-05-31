@@ -237,7 +237,8 @@ async def _log_failed_prediction(request, config, status, error_msg):
         model_id=request.model_id,
         prediction=None,
         score=None,
-        latency_ms=0
+        probability=None,
+        latency_ms=0,
     )
     
     await opensearch_client.log_prediction(

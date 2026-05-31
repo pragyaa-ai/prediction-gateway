@@ -6,6 +6,7 @@ import boto3
 import json
 from models.schemas import InferenceRequest, InferenceResponse, ModelConfig
 from adapters.mappers import get_input_mapper, get_output_mapper
+from adapters.response_utils import build_inference_response
 
 
 class BaseModelAdapter(ABC):
@@ -76,13 +77,7 @@ class AzureMLAdapter(BaseModelAdapter):
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
         
-        return InferenceResponse(
-            request_id=request.request_id,
-            model_id=request.model_id,
-            prediction=standardized["prediction"],
-            score=standardized.get("score"),
-            latency_ms=standardized.get("latency_ms", latency_ms)
-        )
+        return build_inference_response(request, standardized, latency_ms)
 
 
 class AWSSageMakerAdapter(BaseModelAdapter):
@@ -127,13 +122,7 @@ class AWSSageMakerAdapter(BaseModelAdapter):
         # Calculate latency
         latency_ms = int((time.time() - start_time) * 1000)
         
-        return InferenceResponse(
-            request_id=request.request_id,
-            model_id=request.model_id,
-            prediction=standardized["prediction"],
-            score=standardized.get("score"),
-            latency_ms=standardized.get("latency_ms", latency_ms)
-        )
+        return build_inference_response(request, standardized, latency_ms)
 
 
 # Adapter factory
