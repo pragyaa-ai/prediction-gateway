@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     opensearch_password: str = "admin"
     opensearch_use_ssl: bool = False
     opensearch_verify_certs: bool = False
-    opensearch_index_pattern: str = "ml-predictions-v1"
+    # OpenSearch: one index per model → {prefix}-{model-slug}
+    opensearch_index_prefix: str = "ml-predictions"
+    opensearch_index_pattern: Optional[str] = None  # legacy .env alias for prefix
     
     # Azure
     azure_tenant_id: Optional[str] = None
