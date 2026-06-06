@@ -13,11 +13,8 @@ Strategy
 4. Patch xgboost.core.Booster.__setstate__ to survive old binary formats
    (Azure AutoML sometimes stores pre-1.0 boosters).
 
-After calling install_azureml_compat() the two artifacts:
-  models/local-models/los_prediction_ksa/model.pkl
-  models/local-models/Fakeeh-Delay-Arrival_ksa/model.pkl
-
-can be loaded with pickle.load and their .predict(pd.DataFrame) called.
+After calling install_azureml_compat() the Azure AutoML delay/LOS artifacts under
+models/local-models/ can be loaded with pickle.load and their .predict(pd.DataFrame) called.
 """
 from __future__ import annotations
 
@@ -129,6 +126,9 @@ def _patch_xgboost_booster() -> None:
 _AZUREML_MODULES = [
     "azureml",
     "azureml.automl",
+    "azureml.automl.core",
+    "azureml.automl.core.featurization",
+    "azureml.automl.core.featurization.featurizationconfig",
     "azureml.automl.runtime",
     "azureml.automl.runtime.featurization",
     "azureml.automl.runtime.featurization.data_transformer",
@@ -164,6 +164,7 @@ def _make_auto_stub_module(mod_name: str) -> types.ModuleType:
         if name in (
             "PreFittedSoftVotingRegressor",
             "XGBoostRegressor",
+            "LightGBMRegressor",
             "RegressionPipeline",
         ) or "Regressor" in name:
             return (BaseEstimator, RegressorMixin)
@@ -182,6 +183,7 @@ def _make_auto_stub_module(mod_name: str) -> types.ModuleType:
         if name in (
             "PreFittedSoftVotingRegressor",
             "XGBoostRegressor",
+            "LightGBMRegressor",
             "RegressionPipeline",
         ) or "Regressor" in name:
             methods["predict"] = lambda self, X: np.asarray(X)
@@ -196,6 +198,7 @@ def _make_auto_stub_module(mod_name: str) -> types.ModuleType:
 
     mod = types.ModuleType(mod_name)
     mod.__getattr__ = _getattr  # type: ignore[method-assign]
+    mod.__path__ = []  # treat as package so importlib can load submodules
     return mod
 
 
@@ -347,16 +350,26 @@ def _xgboost_wrapper_predict(self: Any, X: Any) -> np.ndarray:
     return inner.predict(X)
 
 
+def _lightgbm_wrapper_predict(self: Any, X: Any) -> np.ndarray:
+    inner = getattr(self, "model", None)
+    if inner is None:
+        raise RuntimeError("LightGBMRegressor: no inner model")
+    return np.asarray(inner.predict(X), dtype=float).reshape(-1)
+
+
 # -- PreFittedSoftVotingRegressor -------------------------------------------
 
 def _voting_predict(self: Any, X: Any) -> np.ndarray:
     ens = self._wrappedEnsemble
     weights = list(ens.weights or ([1] * len(ens.estimators_)))
     preds, valid_w = [], []
+    n_samples = len(X) if hasattr(X, "__len__") else 1
     for est, w in zip(ens.estimators_, weights):
         try:
-            p = est.predict(X)
-            preds.append(np.asarray(p, dtype=float))
+            p = np.asarray(est.predict(X), dtype=float).reshape(-1)
+            if p.size != n_samples:
+                continue
+            preds.append(p)
             valid_w.append(float(w))
         except Exception:
             pass
@@ -463,6 +476,9 @@ def _patch_loaded_model(obj: Any) -> None:
 
     elif cls_name == "XGBoostRegressor":
         type(obj).predict = _xgboost_wrapper_predict  # type: ignore[attr-defined]
+
+    elif cls_name == "LightGBMRegressor":
+        type(obj).predict = _lightgbm_wrapper_predict  # type: ignore[attr-defined]
 
     elif cls_name == "PreFittedSoftVotingRegressor":
         from sklearn.base import BaseEstimator, RegressorMixin

@@ -54,7 +54,8 @@ class ModelConfig(BaseModel):
     # On-disk artifacts (provider: local_artifact)
     local_artifact_path: Optional[str] = None
     local_artifact_format: Optional[str] = None  # pickle | joblib
-    local_model_kind: Optional[str] = None  # sklearn | noshow_xgboost_bundle
+    local_model_kind: Optional[str] = None  # sklearn | noshow_xgboost_bundle | autogluon_tabular | azure_automl_pipeline
+    local_autogluon_model_name: Optional[str] = None  # e.g. WeightedEnsemble-L3-FULL-t1
 
     @model_validator(mode="after")
     def validate_provider_fields(self) -> "ModelConfig":
@@ -64,8 +65,11 @@ class ModelConfig(BaseModel):
             if not self.local_artifact_format:
                 raise ValueError("local_artifact_format is required when provider is 'local_artifact'")
             fmt = self.local_artifact_format.lower()
-            if fmt not in ("pickle", "joblib", "azure_automl_pickle"):
-                raise ValueError("local_artifact_format must be 'pickle', 'joblib', or 'azure_automl_pickle'")
+            if fmt not in ("pickle", "joblib", "azure_automl_pickle", "autogluon_dir"):
+                raise ValueError(
+                    "local_artifact_format must be 'pickle', 'joblib', "
+                    "'azure_automl_pickle', or 'autogluon_dir'"
+                )
         elif not self.endpoint_url:
             raise ValueError(f"endpoint_url is required for provider '{self.provider}'")
         return self

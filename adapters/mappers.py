@@ -256,7 +256,8 @@ def no_show_fakeeh_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
     15. GIVEN_ON, 16. DOCTORS_NATIONALITY, 17. APPT_BOOKING_CHANNEL, 18. CITY,
     19. VISIT_TYPE, 20. CONTRACT_NAME, 21. PAYMENT_STATUS
     
-    Note: All datetime fields are sent as-is (strings). AutoGluon will handle type conversion.
+    Note: Datetime fields are unix timestamps (int). MRNO / APPT_ALLOCATION_ID must be numeric.
+    SageMaker tabular_serve.py expects a flat row in values (not [[row]]).
     """
     from datetime import datetime
 
@@ -307,7 +308,7 @@ def no_show_fakeeh_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "data": {
             "features": {
-                "values": [features]
+                "values": features
             }
         }
     }

@@ -1,0 +1,19 @@
+# AutoGluon stack for no_show_fakeeh_ksa_local (new-noshow-ksa export, AG 0.4.3).
+# Install into a dedicated Python 3.9 venv; point AUTOGUON_PYTHON at its python binary.
+#
+#   python3.9 -m venv venv-autogluon
+#   venv-autogluon/bin/pip install -r requirements-autogluon.txt
+#
+autogluon.tabular==0.5.2
+numpy>=1.21,<1.23
+pandas>=1.4,<2.0
+scikit-learn~=1.0.2
+catboost>=1.0.0
+lightgbm>=3.3.0
+torch>=1.10,<2.4
+torchvision>=0.11,<0.20
+fastai==2.7.15
+fastcore>=1.5.29,<1.6
+fastdownload>=0.0.5
+fastprogress>=1.0.0
+xgboost>=1.7.0,<2.0.0

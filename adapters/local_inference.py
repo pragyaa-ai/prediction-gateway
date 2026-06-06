@@ -4,7 +4,10 @@ Load serialized models from disk (shipped under models/local-models) for on-prem
 from __future__ import annotations
 
 import asyncio
+import json
 import pickle
+import subprocess
+import sys
 import time
 from pathlib import Path
 from threading import Lock
@@ -82,10 +85,18 @@ def _resolve_artifact_path(rel: str) -> Path:
     )
 
 
+def _artifact_mtime(path: Path, fmt: str) -> float:
+    if fmt == "autogluon_dir":
+        marker = path / "predictor.pkl"
+        if marker.exists():
+            return marker.stat().st_mtime
+    return path.stat().st_mtime
+
+
 def _load_artifact(config: ModelConfig) -> Any:
     path = _resolve_artifact_path(config.local_artifact_path)  # type: ignore[arg-type]
     fmt = (config.local_artifact_format or "pickle").lower()
-    mtime = path.stat().st_mtime
+    mtime = _artifact_mtime(path, fmt)
     key = str(path.resolve())
     cached = _cache.get(key)
     if cached and cached[0] == mtime:
@@ -102,6 +113,10 @@ def _load_artifact(config: ModelConfig) -> Any:
             from adapters.azureml_compat import load_azure_automl_pickle
 
             obj = load_azure_automl_pickle(str(path))
+        elif fmt == "autogluon_dir":
+            if not path.is_dir():
+                raise FileNotFoundError(f"AutoGluon model directory not found: {path}")
+            obj = _load_autogluon_artifact(path, config)
         elif fmt == "pickle":
             with open(path, "rb") as f:
                 obj = pickle.load(f)
@@ -109,6 +124,58 @@ def _load_artifact(config: ModelConfig) -> Any:
             raise ValueError(f"Unsupported local_artifact_format: {fmt}")
         _cache[key] = (mtime, obj)
     return obj
+
+
+def _autogluon_python() -> str:
+    if settings.autogluon_python:
+        return settings.autogluon_python
+    for rel in ("venv-autogluon/bin/python", "venv39/bin/python"):
+        candidate = PROJECT_ROOT / rel
+        if candidate.exists():
+            return str(candidate)
+    return sys.executable
+
+
+def _load_autogluon_artifact(path: Path, config: ModelConfig) -> Dict[str, Any]:
+    from adapters.autogluon_noshow import DEFAULT_ENSEMBLE_MODEL, autogluon_available, load_autogluon_predictor
+
+    model_name = config.local_autogluon_model_name or DEFAULT_ENSEMBLE_MODEL
+    bundle: Dict[str, Any] = {
+        "model_dir": str(path.resolve()),
+        "model_name": model_name,
+        "use_subprocess": not autogluon_available(),
+        "python_bin": _autogluon_python(),
+    }
+    if not bundle["use_subprocess"]:
+        bundle["predictor"] = load_autogluon_predictor(str(path))
+    return bundle
+
+
+def _autogluon_noshow_predict(bundle: Dict[str, Any], inputs: Dict[str, Any]) -> Dict[str, Any]:
+    model_name = bundle.get("model_name", "WeightedEnsemble_L3_FULL")
+    if bundle.get("use_subprocess"):
+        script = PROJECT_ROOT / "scripts" / "autogluon_noshow_infer.py"
+        payload = {
+            "model_dir": bundle["model_dir"],
+            "model_name": model_name,
+            "inputs": inputs,
+        }
+        proc = subprocess.run(
+            [bundle["python_bin"], str(script)],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"AutoGluon subprocess inference failed (exit {proc.returncode}): {proc.stderr.strip()}"
+            )
+        return json.loads(proc.stdout)
+
+    from adapters.autogluon_noshow import predict_autogluon_noshow
+
+    return predict_autogluon_noshow(bundle["predictor"], inputs, model_name=model_name)
 
 
 def _coerce_float(val: Any) -> float:
@@ -231,7 +298,15 @@ class LocalArtifactAdapter(BaseModelAdapter):
         if kind == "noshow_xgboost_bundle":
             if not isinstance(artifact, dict) or "model" not in artifact or "feature_names" not in artifact:
                 raise ValueError("noshow_xgboost_bundle expects a pickle dict with 'model' and 'feature_names'")
-            raw = await asyncio.to_thread(_noshow_bundle_predict, artifact, request.inputs)
+            input_mapper = get_input_mapper(config.input_mapper)
+            mapped = input_mapper(request.inputs)
+            raw = await asyncio.to_thread(_noshow_bundle_predict, artifact, mapped)
+        elif kind == "autogluon_tabular":
+            if not isinstance(artifact, dict) or "model_dir" not in artifact:
+                raise ValueError("autogluon_tabular expects a bundle dict with 'model_dir'")
+            input_mapper = get_input_mapper(config.input_mapper)
+            mapped = input_mapper(request.inputs)
+            raw = await asyncio.to_thread(_autogluon_noshow_predict, artifact, mapped)
         elif kind == "azure_automl_pipeline":
             input_mapper = get_input_mapper(config.input_mapper)
             mapped = input_mapper(request.inputs)

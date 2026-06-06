@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     # Override when models live outside the repo, e.g. /opt/ml-models
     local_models_dir: Optional[str] = None
 
+    # Python binary with AutoGluon installed (requirements-autogluon.txt).
+    # Used for no_show_fakeeh_ksa_local when autogluon is not in the main venv.
+    autogluon_python: Optional[str] = None
+
     # OpenSearch
     opensearch_host: str = "localhost"
     opensearch_port: int = 9200

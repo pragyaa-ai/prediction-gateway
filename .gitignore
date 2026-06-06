@@ -24,9 +24,14 @@ wheels/
 .venv
 env/
 venv/
+venv39/
+venv-autogluon/
 ENV/
 env.bak/
 venv.bak/
+offline-bundle/
+dist/
+*.pkl.bak
 
 # IDE
 .vscode/
