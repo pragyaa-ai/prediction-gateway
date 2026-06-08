@@ -14,6 +14,8 @@ Environment:
   API_GATEWAY_URL        cloud endpoint (unchanged)
   SSL_CERT / SSL_KEY     default /home/sysadmin/fakeeh.care/fullchain.pem + PK.key
   FLASK_USE_SSL          default true (set false for plain HTTP)
+  CLOUD_REQUEST_TIMEOUT  default 30 seconds
+  FLASK_DEBUG            default false (do not use reloader under nohup)
 """
 from __future__ import annotations
 
@@ -22,8 +24,12 @@ import io
 import json
 import logging
 import os
+import sys
 import threading
 from datetime import datetime, timezone
+
+# Ensure logs appear immediately when stdout is redirected (nohup)
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
 import pandas as pd
 import requests
@@ -34,8 +40,16 @@ from urllib3.util.retry import Retry
 
 app = Flask(__name__)
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 logger = logging.getLogger(__name__)
+
+CLOUD_REQUEST_TIMEOUT = int(os.getenv("CLOUD_REQUEST_TIMEOUT", "30"))
+OPENSEARCH_TIMEOUT = int(os.getenv("OPENSEARCH_TIMEOUT", "15"))
 
 API_GATEWAY_URL = os.getenv(
     "API_GATEWAY_URL", "https://apis.pragyaa.ai/predict/predict-show-no-show"
@@ -194,6 +208,7 @@ def save_to_opensearch(input_data, prediction):
             headers=HEADERS,
             auth=HTTPBasicAuth(USERNAME, PASSWORD),
             verify=False,
+            timeout=OPENSEARCH_TIMEOUT,
         )
 
         if response.status_code not in [200, 201]:
@@ -209,9 +224,18 @@ def invoke_api_gateway(csv_data: str):
     headers = {"Content-Type": "text/csv; charset=utf-8"}
     try:
         body = csv_data.encode("utf-8") if isinstance(csv_data, str) else csv_data
-        response = requests.post(API_GATEWAY_URL, data=body, headers=headers)
+        logger.info("Calling cloud API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
+        response = requests.post(
+            API_GATEWAY_URL,
+            data=body,
+            headers=headers,
+            timeout=CLOUD_REQUEST_TIMEOUT,
+        )
         response.raise_for_status()
         return response.text
+    except requests.exceptions.Timeout:
+        logger.error("Cloud API timed out after %ss", CLOUD_REQUEST_TIMEOUT)
+        return None
     except requests.exceptions.RequestException as e:
         logger.error("Error calling API Gateway: %s", str(e))
         return None
@@ -285,6 +309,11 @@ def log_response_info(response):
     return response
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "fakeeh-noshow-proxy"}), 200
+
+
 @app.route("/predict/getPrediction", methods=["POST"])
 def predict():
     try:
@@ -314,7 +343,7 @@ def predict():
         prediction = invoke_api_gateway(input_csv)
         logger.info("Received prediction from API Gateway: %s", prediction)
         if not prediction:
-            return jsonify({"error": "No prediction received from API Gateway"}), 500
+            return jsonify({"error": "No prediction received from API Gateway (timeout or upstream error)"}), 504
 
         save_to_opensearch(data, prediction)
 
@@ -328,7 +357,7 @@ def predict():
 if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(os.getenv("FLASK_PORT", "5010"))
-    debug = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
+    debug = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
 
     ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
     ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
@@ -355,4 +384,6 @@ if __name__ == "__main__":
         port=port,
         debug=debug,
         ssl_context=ssl_context,
+        use_reloader=False,
+        threaded=True,
     )

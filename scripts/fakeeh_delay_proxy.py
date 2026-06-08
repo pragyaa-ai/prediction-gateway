@@ -17,6 +17,8 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+
 import requests
 from flask import Flask, jsonify, request
 from requests.adapters import HTTPAdapter
@@ -30,8 +32,16 @@ if str(ROOT) not in sys.path:
 from adapters.delay_features import prepare_fakeeh_delay_cloud_payload  # noqa: E402
 
 app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
 logger = logging.getLogger(__name__)
+
+CLOUD_REQUEST_TIMEOUT = int(os.getenv("CLOUD_REQUEST_TIMEOUT", "30"))
+OPENSEARCH_TIMEOUT = int(os.getenv("OPENSEARCH_TIMEOUT", "15"))
 
 API_GATEWAY_URL = os.getenv(
     "API_GATEWAY_URL", "https://apis.pragyaa.ai/arrive/get-delayed-time"
@@ -118,6 +128,7 @@ def save_to_opensearch(input_data: dict, prediction) -> None:
             headers=HEADERS,
             auth=HTTPBasicAuth(USERNAME, PASSWORD),
             verify=False,
+            timeout=OPENSEARCH_TIMEOUT,
         )
         if not (200 <= response.status_code < 300):
             raise RuntimeError(f"Failed to index data: {response.status_code} {response.text}")
@@ -152,6 +163,11 @@ def invoke_local_gateway_async(raw_input: dict) -> None:
     threading.Thread(target=_run, name="local-delay-dup", daemon=True).start()
 
 
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "fakeeh-delay-proxy"}), 200
+
+
 @app.route("/arrive/get-delayed-time", methods=["POST"])
 def predict():
     try:
@@ -166,7 +182,8 @@ def predict():
         if LOCAL_GATEWAY_ENABLED:
             invoke_local_gateway_async(data)
 
-        response = requests.post(API_GATEWAY_URL, json=payload, timeout=30)
+        logger.info("Calling cloud API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
+        response = requests.post(API_GATEWAY_URL, json=payload, timeout=CLOUD_REQUEST_TIMEOUT)
         response.raise_for_status()
         model_response = response.json()
         predicted_time = model_response.get("body", {}).get("delayed_arrival")
@@ -186,7 +203,7 @@ def predict():
 if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(os.getenv("FLASK_PORT", "5030"))
-    debug = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
+    debug = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
 
     ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
     ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
@@ -207,4 +224,4 @@ if __name__ == "__main__":
     else:
         logger.info("HTTP   http://%s:%s/arrive/get-delayed-time", host, port)
 
-    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
+    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context, use_reloader=False, threaded=True)
