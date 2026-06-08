@@ -214,7 +214,13 @@ def _sklearn_predict(model: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _automl_pipeline_predict(model: Any, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Run inference on an Azure AutoML RegressionPipeline loaded by azureml_compat."""
-    X = pd.DataFrame([inputs])
+    from adapters.delay_features import DELAY_KSA_AUTOML_COLUMNS
+
+    # Preserve column order when all keys are known (delay KSA schema)
+    if all(k in inputs for k in DELAY_KSA_AUTOML_COLUMNS):
+        X = pd.DataFrame([[inputs[k] for k in DELAY_KSA_AUTOML_COLUMNS]], columns=list(DELAY_KSA_AUTOML_COLUMNS))
+    else:
+        X = pd.DataFrame([inputs])
     preds = model.predict(X)
     val = float(preds[0]) if len(preds) else 0.0
     conf = _voting_ensemble_confidence(model, X)

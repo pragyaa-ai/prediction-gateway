@@ -505,16 +505,121 @@ def _parse_fakeeh_delay_age(age_str: Any) -> float:
 
 
 def _parse_fakeeh_delay_datetime(dt_str: Any) -> Optional[datetime]:
-    """Match Fakeeh delay Flask proxy date parsing."""
+    """Match Fakeeh delay Flask proxy date parsing (%m/%d/%Y %H:%M only)."""
     if not dt_str:
         return None
     text = str(dt_str).strip()
-    for fmt in ("%m/%d/%Y %H:%M", "%d-%m-%Y %H:%M", "%d-%m-%Y %H:%M:%S"):
-        try:
-            return datetime.strptime(text, fmt)
-        except ValueError:
-            continue
-    return _parse_datetime(dt_str)
+    try:
+        return datetime.strptime(text, "%m/%d/%Y %H:%M")
+    except ValueError:
+        return None
+
+
+def _parse_age_years_float(age_str: Any) -> float:
+    """Age in years for Azure AutoML delay schema (AGE column)."""
+    if not age_str:
+        return 0.0
+    text = str(age_str).strip().lower()
+    if text.endswith("y"):
+        return float(text[:-1])
+    if text.endswith("m"):
+        return float(text[:-1]) / 12.0
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+# Azure AutoML on-disk model (Fakeeh-Delay-Arrival_ksa/model.pkl) input schema — see MLmodel
+DELAY_KSA_AUTOML_COLUMNS: tuple[str, ...] = (
+    "HOSPITAL_ID_details",
+    "PROVIDER_NAME_details",
+    "DEPARTMENT_details",
+    "MRNO_details",
+    "TOKEN_NO_details",
+    "APPT_ALLOCATION_ID",
+    "FACILITY_NAME_details",
+    "PROVIDER_NAME_delay",
+    "DEPARTMENT_delay",
+    "MRNO_delay",
+    "TOKEN_NO_delay",
+    "HOSPITAL_ID_delay",
+    "FACILITY_NAME_delay",
+    "ALLOCATION_DATETIME",
+    "ALLOCATION_HOUR",
+    "ALLOCATION_DAY_OF_WEEK",
+    "ALLOCATION_MONTH",
+    "IS_WEEKEND",
+    "AGE",
+    "GENDER_ENCODED",
+    "STATUS_ENCODED",
+    "VISIT_METHOD_ENCODED",
+    "PAYMENT_STATUS_ENCODED",
+)
+
+
+def prepare_delay_ksa_automl_input(data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Map hospital appointment JSON → Fakeeh-Delay-Arrival_ksa Azure AutoML columns.
+
+    This is the on-disk local model schema (MLmodel signature). The cloud Flask proxy
+    uses a separate 161-column wide schema via prepare_fakeeh_delay_model_input().
+    """
+    provider = str(data.get("PROVIDER_NAME") or "")
+    department = str(data.get("DEPARTMENT") or "")
+    mrno_raw = data.get("MRNO", data.get("STATUS", ""))
+    token = str(data.get("TOKEN_NO") or "")
+    facility = str(data.get("FACILITY_NAME") or data.get("HOSPITAL_NAME") or "")
+
+    try:
+        appt_id = int(data.get("APPT_ALLOCATION_ID") or 0)
+    except (TypeError, ValueError):
+        appt_id = 0
+
+    try:
+        mrno_details = float(mrno_raw) if mrno_raw not in (None, "") else 0.0
+    except (TypeError, ValueError):
+        mrno_details = 0.0
+
+    alloc_dt = _parse_fakeeh_delay_datetime(data.get("ALLOCATION_DATE_TIME"))
+
+    gender = str(data.get("GENDER") or "").strip().lower()
+    if gender in ("female", "f"):
+        gender_enc = 1.0
+    elif gender in ("male", "m"):
+        gender_enc = 0.0
+    else:
+        gender_enc = -1.0
+
+    visit_method = str(data.get("VISIT_METHOD") or "").lower()
+    visit_method_enc = 1.0 if "virtual" in visit_method else 0.0
+
+    row: Dict[str, Any] = {
+        "HOSPITAL_ID_details": 1.0,
+        "PROVIDER_NAME_details": provider,
+        "DEPARTMENT_details": department,
+        "MRNO_details": mrno_details,
+        "TOKEN_NO_details": token,
+        "APPT_ALLOCATION_ID": appt_id,
+        "FACILITY_NAME_details": facility,
+        "PROVIDER_NAME_delay": provider,
+        "DEPARTMENT_delay": department,
+        "MRNO_delay": str(mrno_raw or ""),
+        "TOKEN_NO_delay": token,
+        "HOSPITAL_ID_delay": "1",
+        "FACILITY_NAME_delay": facility,
+        "ALLOCATION_DATETIME": alloc_dt.strftime("%Y-%m-%dT%H:%M:%SZ") if alloc_dt else "",
+        "ALLOCATION_HOUR": alloc_dt.hour if alloc_dt else 0,
+        "ALLOCATION_DAY_OF_WEEK": alloc_dt.isoweekday() if alloc_dt else 0,
+        "ALLOCATION_MONTH": alloc_dt.month if alloc_dt else 0,
+        "IS_WEEKEND": 1 if alloc_dt and alloc_dt.isoweekday() >= 6 else 0,
+        "AGE": _parse_age_years_float(data.get("AGE")),
+        "GENDER_ENCODED": gender_enc,
+        "STATUS_ENCODED": -1.0,
+        "VISIT_METHOD_ENCODED": visit_method_enc,
+        "PAYMENT_STATUS_ENCODED": -1.0,
+    }
+    return row
 
 
 def prepare_fakeeh_delay_model_input(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -588,15 +693,12 @@ def prepare_fakeeh_delay_cloud_payload(data: Dict[str, Any]) -> Dict[str, Any]:
 
 def engineer_delay_features(inputs: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Build the wide feature row expected by delay_fakeeh_ksa_local (161 columns).
+    Build input row for delay_fakeeh_ksa_local (Azure AutoML pickle on disk).
     """
     raw = normalize_delay_inputs(inputs)
 
     if _has_wide_features(raw):
-        row = _blank_wide_row()
-        for col in DELAY_WIDE_COLUMNS:
-            if col in raw:
-                row[col] = raw[col]
-        return row
+        # Legacy wide-row callers — still unsupported by on-disk AutoML model
+        return prepare_delay_ksa_automl_input(raw)
 
-    return prepare_fakeeh_delay_model_input(raw)
+    return prepare_delay_ksa_automl_input(raw)
