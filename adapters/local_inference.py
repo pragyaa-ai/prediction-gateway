@@ -215,8 +215,9 @@ def _sklearn_predict(model: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
 def _automl_pipeline_predict(model: Any, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Run inference on an Azure AutoML RegressionPipeline loaded by azureml_compat."""
     from adapters.delay_features import FAKEEH_DELAY_MODEL_COLUMNS, FAKEEH_DELAY_STRING_COLUMNS
+    from adapters.los_features import LOS_BOOL_TO_INT, LOS_MODEL_COLUMNS, LOS_STRING_COLUMNS
 
-    # delay_fakeeh_ksa_local model.pkl expects the 161-column wide row (cloud parity)
+    # delay_fakeeh_ksa_local: 161-column wide row (cloud parity schema)
     if all(k in inputs for k in FAKEEH_DELAY_MODEL_COLUMNS):
         row = []
         for col in FAKEEH_DELAY_MODEL_COLUMNS:
@@ -226,8 +227,31 @@ def _automl_pipeline_predict(model: Any, inputs: Dict[str, Any]) -> Dict[str, An
             else:
                 row.append(0 if val is None or val == "" else val)
         X = pd.DataFrame([row], columns=list(FAKEEH_DELAY_MODEL_COLUMNS))
+
+    # los_fakeeh_ksa_local: ~55-column schema matching DEFAULT_INPUT_SCHEMA in the proxy.
+    # Build in exact column order; coerce booleans to int and strings to "".
+    elif any(k in inputs for k in ("ADMISSION_TYPE", "ADMISSION_LEVEL", "LOS_GROUP")):
+        row = []
+        for col in LOS_MODEL_COLUMNS:
+            val = inputs.get(col)
+            if col in LOS_BOOL_TO_INT:
+                # Python bool True/False → 1/0
+                if isinstance(val, bool):
+                    row.append(1 if val else 0)
+                else:
+                    try:
+                        row.append(int(val) if val not in (None, "") else 0)
+                    except (TypeError, ValueError):
+                        row.append(0)
+            elif col in LOS_STRING_COLUMNS:
+                row.append("" if val is None else str(val))
+            else:
+                row.append(0 if val is None or val == "" else val)
+        X = pd.DataFrame([row], columns=list(LOS_MODEL_COLUMNS))
+
     else:
         X = pd.DataFrame([inputs])
+
     preds = model.predict(X)
     val = float(preds[0]) if len(preds) else 0.0
     conf = _voting_ensemble_confidence(model, X)
