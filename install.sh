@@ -103,9 +103,9 @@ install_packages() {
         apt)
             apt-get update -y -qq
             DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-                curl wget gnupg2 ca-certificates \
+                curl wget gnupg2 ca-certificates software-properties-common \
                 python3 python3-venv python3-dev python3-pip \
-                build-essential libgomp1 git rsync ;;
+                build-essential libgomp1 git git-lfs rsync ;;
         dnf|yum)
             $PKG_MGR install -y -q \
                 curl wget gnupg2 ca-certificates \
@@ -123,6 +123,25 @@ install_packages() {
 install_packages
 success "System packages ready."
 
+# Python 3.9 for AutoGluon no-show (gateway venv uses system python3 / 3.12)
+ensure_python39() {
+    if command -v python3.9 &>/dev/null; then
+        success "Python 3.9 available for AutoGluon."
+        return 0
+    fi
+    if [[ "$PKG_MGR" == "apt" ]]; then
+        info "Installing Python 3.9 (AutoGluon no-show model)..."
+        add-apt-repository -y ppa:deadsnakes/ppa
+        apt-get update -y -qq
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            python3.9 python3.9-venv python3.9-dev
+        success "Python 3.9 installed."
+    else
+        warn "python3.9 not found — install manually for no_show_fakeeh_ksa_local."
+    fi
+}
+ensure_python39
+
 # Ensure we have a recent-enough Python (≥ 3.9)
 PY_VERSION=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
 PY_MAJOR=$(echo "$PY_VERSION" | cut -d. -f1)
@@ -137,7 +156,21 @@ success "Python $PY_VERSION OK."
 # =============================================================================
 # STEP 3 – Create user & deploy application files
 # =============================================================================
-step "3 / 8  Deploying application"
+step "3 / 9  Deploying application"
+
+# Pull LFS model artifacts when installing from a git clone
+if [[ -d "$REPO_SOURCE_DIR/.git" ]] && command -v git-lfs &>/dev/null; then
+    info "Pulling Git LFS models (required for no-show + delay)..."
+    git lfs install --local 2>/dev/null || true
+    (cd "$REPO_SOURCE_DIR" && git lfs pull)
+fi
+
+if [[ -d "$REPO_SOURCE_DIR/models/local-models/new-noshow-ksa" ]]; then
+    if [[ ! -f "$REPO_SOURCE_DIR/models/local-models/new-noshow-ksa/learner.pkl" ]] \
+        || head -c 20 "$REPO_SOURCE_DIR/models/local-models/new-noshow-ksa/learner.pkl" 2>/dev/null | grep -q "git-lfs"; then
+        warn "Model files look like LFS pointers — run: git lfs pull"
+    fi
+fi
 
 # Create a dedicated system user (no login shell)
 if ! id "$GATEWAY_USER" &>/dev/null; then
@@ -164,9 +197,9 @@ chown -R "$GATEWAY_USER:$GATEWAY_USER" "$GATEWAY_DIR"
 success "Application files deployed."
 
 # =============================================================================
-# STEP 4 – Python virtual environment & dependencies
+# STEP 4 – Gateway virtual environment (Python 3.12+)
 # =============================================================================
-step "4 / 8  Installing Python dependencies"
+step "4 / 9  Installing gateway Python dependencies"
 
 VENV="$GATEWAY_DIR/venv"
 
@@ -178,12 +211,29 @@ sudo -u "$GATEWAY_USER" "$VENV/bin/pip" install --upgrade pip wheel setuptools -
 info "Installing requirements.txt (this may take 1-2 minutes for numpy/xgboost)..."
 sudo -u "$GATEWAY_USER" "$VENV/bin/pip" install -r "$GATEWAY_DIR/requirements.txt"
 
-success "Python environment ready."
+success "Gateway venv ready."
 
 # =============================================================================
-# STEP 5 – Environment file
+# STEP 5 – AutoGluon virtual environment (Python 3.9, no-show model)
 # =============================================================================
-step "5 / 8  Configuring environment"
+step "5 / 9  Installing AutoGluon environment (no-show KSA)"
+
+AG_VENV="$GATEWAY_DIR/venv-autogluon"
+if command -v python3.9 &>/dev/null && [[ -f "$GATEWAY_DIR/requirements-autogluon.txt" ]]; then
+    rm -rf "$AG_VENV"
+    sudo -u "$GATEWAY_USER" python3.9 -m venv "$AG_VENV"
+    info "Installing requirements-autogluon.txt (may take several minutes)..."
+    sudo -u "$GATEWAY_USER" "$AG_VENV/bin/pip" install --upgrade pip wheel setuptools -q
+    sudo -u "$GATEWAY_USER" "$AG_VENV/bin/pip" install -r "$GATEWAY_DIR/requirements-autogluon.txt"
+    success "AutoGluon venv: $AG_VENV"
+else
+    warn "Skipped AutoGluon venv — python3.9 or requirements-autogluon.txt missing."
+fi
+
+# =============================================================================
+# STEP 6 – Environment file
+# =============================================================================
+step "6 / 9  Configuring environment"
 
 ENV_FILE="$GATEWAY_DIR/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -200,12 +250,28 @@ else
     info ".env already exists – skipping."
 fi
 
+# Always set paths for local KSA models + AutoGluon python
+set_env_var() {
+    local key="$1" val="$2"
+    if grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+    else
+        echo "${key}=${val}" >> "$ENV_FILE"
+    fi
+}
+if [[ -x "$AG_VENV/bin/python" ]]; then
+    set_env_var "AUTOGUON_PYTHON" "$AG_VENV/bin/python"
+fi
+set_env_var "LOCAL_MODELS_DIR" "$GATEWAY_DIR/models/local-models"
+chown "$GATEWAY_USER:$GATEWAY_USER" "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+
 success "Environment configured."
 
 # =============================================================================
-# STEP 6 – Model smoke-test (non-fatal)
+# STEP 7 – Model smoke-test (non-fatal)
 # =============================================================================
-step "6 / 8  Model smoke-test"
+step "7 / 9  Model smoke-test"
 
 sudo -u "$GATEWAY_USER" bash -c "
     cd $GATEWAY_DIR
@@ -213,9 +279,9 @@ sudo -u "$GATEWAY_USER" bash -c "
 import sys, traceback
 sys.path.insert(0, '.')
 try:
-    from core.registry import ModelRegistry
+    from models.registry import ModelRegistry
     r = ModelRegistry()
-    enabled = [n for n, m in r.models.items() if m.enabled]
+    enabled = [n for n, m in r.list_models().items() if m.enabled]
     print('    Enabled models:', enabled)
     print('    Registry OK.')
 except Exception as e:
@@ -225,9 +291,9 @@ except Exception as e:
 " && success "Registry loaded." || warn "Smoke-test raised an error (gateway may still start)."
 
 # =============================================================================
-# STEP 7 – systemd service
+# STEP 8 – systemd service
 # =============================================================================
-step "7 / 8  Creating systemd service"
+step "8 / 9  Creating systemd service"
 
 SYSTEMD_UNIT=/etc/systemd/system/ml-gateway.service
 
@@ -249,6 +315,16 @@ EnvironmentFile=-$ENV_FILE
 Environment=GATEWAY_HOST=0.0.0.0
 Environment=GATEWAY_PORT=$GATEWAY_PORT
 Environment=PYTHONUNBUFFERED=1
+Environment=LOCAL_MODELS_DIR=$GATEWAY_DIR/models/local-models
+EOF
+
+if [[ -x "$AG_VENV/bin/python" ]]; then
+    cat >> "$SYSTEMD_UNIT" <<EOF
+Environment=AUTOGUON_PYTHON=$AG_VENV/bin/python
+EOF
+fi
+
+cat >> "$SYSTEMD_UNIT" <<EOF
 
 ExecStart=$VENV/bin/uvicorn main:app \\
     --host 0.0.0.0 \\
@@ -277,9 +353,9 @@ systemctl enable ml-gateway
 success "Systemd service installed and enabled."
 
 # =============================================================================
-# STEP 8 – Firewall & launch
+# STEP 9 – Firewall & launch
 # =============================================================================
-step "8 / 8  Firewall & launch"
+step "9 / 9  Firewall & launch"
 
 # ufw (Debian/Ubuntu)
 if command -v ufw &>/dev/null; then
@@ -322,9 +398,9 @@ for i in $(seq 1 24); do
         echo "    sudo journalctl -u ml-gateway -f"
         echo "    sudo journalctl -u ml-gateway --since '10 min ago'"
         echo ""
-        echo "  To update (no service interruption > 1 s):"
-        echo "    sudo rsync -a --exclude='.git' --exclude='venv' . $GATEWAY_DIR/"
-        echo "    sudo systemctl restart ml-gateway"
+        echo "  To update after git pull:"
+        echo "    git lfs pull"
+        echo "    sudo bash scripts/update-ksa-models.sh --dir $GATEWAY_DIR"
         echo ""
         exit 0
     fi

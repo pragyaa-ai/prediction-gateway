@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  In-place update for an EXISTING /opt/ml-gateway deployment.
+#  KSA model update — run from cloned GitHub repo (git pull + git lfs pull first).
 #
-#  Keeps the old venv/ intact — only adds missing packages (lightgbm for delay).
-#  Adds venv-autogluon/ alongside for the new no-show model (separate env).
+#    cd prediction-gateway
+#    git lfs pull
+#    sudo bash scripts/update-ksa-models.sh
 #
-#  Run from extracted ksa-update pack:
-#    sudo bash update-ksa-models.sh
-#    sudo bash update-ksa-models.sh --dir /opt/ml-gateway --source /path/to/ksa-update
-#
-#  What gets updated:
-#    code/           adapters, config/models.yaml, scripts  (patched in place)
-#    models/         new-noshow-ksa + Fakeeh-Delay-Arrival_ksa  (replaced, old backed up)
-#    venv/           KEPT — only lightgbm added if missing
-#    venv-autogluon/ NEW — only if no existing AutoGluon python found
+#  Updates no_show_fakeeh_ksa_local + delay_fakeeh_ksa_local on /opt/ml-gateway.
+#  Keeps existing gateway venv; creates venv-autogluon (Python 3.9) for no-show.
 # =============================================================================
 
 set -euo pipefail
 IFS=$'\n\t'
 
-SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# Default source = repo root when script lives in scripts/
+if [[ -f "$SCRIPT_DIR/../main.py" ]]; then
+    SOURCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+else
+    SOURCE_DIR="$SCRIPT_DIR"
+fi
 GATEWAY_DIR="/opt/ml-gateway"
 GATEWAY_USER="mlgateway"
 SKIP_RESTART=false
@@ -54,8 +54,12 @@ if [[ ! -d "$GATEWAY_DIR" || ! -f "$GATEWAY_DIR/main.py" ]]; then
 fi
 
 if [[ ! -f "$SOURCE_DIR/config/models.yaml" ]]; then
-    error "Update source missing config/models.yaml — point --source at ksa-update pack"
+    error "Run from prediction-gateway repo (or pass --source /path/to/repo)"
     exit 1
+fi
+
+if [[ ! -d "$SOURCE_DIR/models/local-models/new-noshow-ksa" ]]; then
+    warn "new-noshow-ksa missing — run: git lfs pull"
 fi
 
 echo ""
@@ -202,55 +206,90 @@ GW_WHEELS="$SOURCE_DIR/wheels/gateway"
 if venv_has_module "$GATEWAY_PY" lightgbm; then
     success "lightgbm already in gateway venv — no pip changes"
 else
-    info "Installing lightgbm into existing venv (delay model needs it)..."
+    info "Installing lightgbm into existing venv (--no-deps, delay model)..."
     if [[ -d "$GW_WHEELS" ]]; then
-        pip_in_venv "$GATEWAY_PY" "$GW_WHEELS" lightgbm
+        pip_in_venv "$GATEWAY_PY" "$GW_WHEELS" --no-deps lightgbm
     else
-        pip_in_venv "$GATEWAY_PY" "" lightgbm
+        pip_in_venv "$GATEWAY_PY" "" --no-deps lightgbm
     fi
     venv_has_module "$GATEWAY_PY" lightgbm \
         && success "lightgbm installed" \
         || warn "lightgbm install failed — delay model may not load"
 fi
 
+find_bundled_python39() {
+    local candidate
+    for candidate in \
+        "$SOURCE_DIR/runtime/python39/bin/python3.9" \
+        "$SOURCE_DIR/runtime/python39/bin/python3" \
+        "$GATEWAY_DIR/runtime/python39/bin/python3.9"; do
+        if [[ -x "$candidate" ]]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+ensure_python39() {
+    if command -v python3.9 &>/dev/null; then
+        echo python3.9
+        return 0
+    fi
+    info "Installing python3.9 (AutoGluon requires 3.9, gateway stays on 3.12)..."
+    apt-get update -qq
+    apt-get install -y software-properties-common
+    add-apt-repository -y ppa:deadsnakes/ppa
+    apt-get update -qq
+    apt-get install -y python3.9 python3.9-venv python3.9-dev
+    echo python3.9
+}
+
+install_autogluon_venv() {
+    local ag_venv="$GATEWAY_DIR/venv-autogluon"
+    local ag_wheels="$SOURCE_DIR/wheels/autogluon"
+    local req="$SOURCE_DIR/requirements-autogluon.txt"
+    local py39 bundled_py
+
+    [[ -f "$req" ]] || { error "Missing $req"; exit 1; }
+    cp "$req" "$GATEWAY_DIR/requirements-autogluon.txt"
+
+    if bundled_py="$(find_bundled_python39 2>/dev/null)"; then
+        info "Using bundled Python 3.9 from runtime/python39/"
+        mkdir -p "$GATEWAY_DIR/runtime"
+        rsync -a "$SOURCE_DIR/runtime/python39/" "$GATEWAY_DIR/runtime/python39/"
+        py39="$GATEWAY_DIR/runtime/python39/bin/python3.9"
+        [[ -x "$py39" ]] || py39="$GATEWAY_DIR/runtime/python39/bin/python3"
+    else
+        py39="$(ensure_python39)"
+    fi
+
+    rm -rf "$ag_venv"
+    info "Creating venv-autogluon..."
+    "$py39" -m venv "$ag_venv"
+    AG_PY="$ag_venv/bin/python"
+    "$AG_PY" -m pip install --upgrade pip wheel setuptools
+    if [[ -d "$ag_wheels" ]] && ls "$ag_wheels"/* &>/dev/null 2>&1; then
+        pip_in_venv "$AG_PY" "$ag_wheels" -r "$GATEWAY_DIR/requirements-autogluon.txt"
+    else
+        pip_in_venv "$AG_PY" "" -r "$GATEWAY_DIR/requirements-autogluon.txt"
+    fi
+    chown -R "$GATEWAY_USER:$GATEWAY_USER" "$ag_venv" "$GATEWAY_DIR/runtime" 2>/dev/null || \
+        chown -R "$GATEWAY_USER:$GATEWAY_USER" "$ag_venv"
+    echo "$AG_PY"
+}
+
 # ── 4. AutoGluon python for no-show ─────────────────────────────────────────
-step "4 / 6  AutoGluon env for no-show (sibling to existing venv)"
+step "4 / 6  AutoGluon env for no-show (Python 3.9 venv)"
 
 AG_PY=""
 if AG_PY="$(find_autogluon_python)"; then
     success "Reusing existing AutoGluon python: $AG_PY"
 else
-    AG_VENV="$GATEWAY_DIR/venv-autogluon"
-    AG_WHEELS="$SOURCE_DIR/wheels/autogluon"
-    info "No AutoGluon env found — creating $AG_VENV (alongside existing venv/)"
-
-    if [[ -d "$AG_VENV" ]]; then
-        warn "Removing broken/incomplete $AG_VENV"
-        rm -rf "$AG_VENV"
-    fi
-
-    # AutoGluon 0.5.2 needs Python 3.9 — use system python3.9 if available
-    AG_BASE="$BASE_PYTHON"
-    if command -v python3.9 &>/dev/null; then
-        AG_BASE=python3.9
-    elif ! "$BASE_PYTHON" -c 'import sys; exit(0 if sys.version_info[:2]==(3,9) else 1)' 2>/dev/null; then
-        warn "python3.9 not found — AutoGluon venv needs Python 3.9 on production"
-        warn "Install: apt install python3.9 python3.9-venv (or use bundled system-deps debs)"
-    fi
-
-    "$AG_BASE" -m venv "$AG_VENV"
-    AG_PY="$AG_VENV/bin/python"
-    info "Installing AutoGluon stack into new venv (offline wheels)..."
-
-    if [[ ! -f "$GATEWAY_DIR/requirements-autogluon.txt" ]]; then
-        cp "$SOURCE_DIR/requirements-autogluon.txt" "$GATEWAY_DIR/requirements-autogluon.txt"
-    fi
-
-    pip_in_venv "$AG_PY" "$AG_WHEELS" -r "$GATEWAY_DIR/requirements-autogluon.txt"
-    chown -R "$GATEWAY_USER:$GATEWAY_USER" "$AG_VENV"
+    AG_PY="$(install_autogluon_venv)"
     venv_has_module "$AG_PY" autogluon.tabular \
-        && success "venv-autogluon ready" \
-        || error "AutoGluon install failed — ensure wheels/autogluon/ is in update pack"
+        && success "venv-autogluon ready ($AG_PY)" \
+        || error "AutoGluon install failed — check network and requirements-autogluon.txt"
 fi
 
 # ── 5. .env ──────────────────────────────────────────────────────────────────
