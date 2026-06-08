@@ -532,10 +532,10 @@ def cost_estimation_ksa_output(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def no_show_bundle_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize raw / SageMaker-style inputs; engineering happens in local_inference."""
-    from adapters.noshow_features import normalize_noshow_inputs
+    """Match Fakeeh Flask cloud CSV row before AutoGluon inference."""
+    from adapters.noshow_features import fakeeh_cloud_model_inputs
 
-    return normalize_noshow_inputs(inputs)
+    return fakeeh_cloud_model_inputs(inputs)
 
 
 def no_show_bundle_local_output(response: Dict[str, Any]) -> Dict[str, Any]:

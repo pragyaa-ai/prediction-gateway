@@ -49,7 +49,7 @@ cost_estimation_ksa_local:
 
 # AutoGluon export (production: WeightedEnsemble-L3-FULL-t1). 21-field appointment schema.
 # Requires AutoGluon env: pip install -r requirements-autogluon.txt (Python 3.9).
-# Set AUTOGUON_PYTHON=/path/to/venv-autogluon/bin/python if not using repo venv39.
+# Set AUTOGLUON_PYTHON=/path/to/venv-autogluon/bin/python if not using repo venv39.
 no_show_fakeeh_ksa_local:
   provider: local_artifact
   endpoint_url: ""

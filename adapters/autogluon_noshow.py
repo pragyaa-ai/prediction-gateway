@@ -197,6 +197,7 @@ def _datetime_to_float(val: Any) -> float:
     if val is None or val == "":
         return float("nan")
     if isinstance(val, (int, float)):
+        # Fakeeh Flask cloud path sends epoch milliseconds
         return float(val)
     dt = _parse_datetime(val)
     if dt is not None:

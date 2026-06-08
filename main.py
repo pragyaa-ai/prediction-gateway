@@ -216,7 +216,11 @@ async def predict(
         raise HTTPException(status_code=504, detail=f"Gateway timeout: {str(e)}")
     
     except Exception as e:
-        # Log error
+        logger.exception(
+            "Prediction failed for model %s: %s",
+            inference_request.model_id,
+            e,
+        )
         background_tasks.add_task(
             _log_failed_prediction,
             inference_request,

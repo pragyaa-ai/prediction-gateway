@@ -40,6 +40,58 @@ NOSHOW_RAW_FIELDS_21: tuple[str, ...] = (
     "PAYMENT_STATUS",
 )
 
+# Fakeeh Flask proxy incoming schema (23 fields) — STATUS/VIP naming
+FAKEEH_FLASK_INCOMING_FIELDS_23: tuple[str, ...] = (
+    "PROVIDER_NAME",
+    "DEPARTMENT",
+    "ALLOCATION_DATE_TIME",
+    "ALLOCATION_DAY",
+    "STATUS",
+    "TOKEN_NO",
+    "GIVEN_BY",
+    "FOLLOW_NEW",
+    "AGE",
+    "REMARKS",
+    "APPT_ALLOCATION_ID",
+    "NATIONALITY",
+    "VIP",
+    "FACILITY_NAME",
+    "GENDER",
+    "VISIT_METHOD",
+    "GIVEN_ON",
+    "DOCTORS_NATIONALITY",
+    "APPT_BOOKING_CHANNEL",
+    "CITY",
+    "VISIT_TYPE",
+    "CONTRACT_NAME",
+    "PAYMENT_STATUS",
+)
+
+# Fakeeh Flask required_fields — values sent to cloud CSV (column 7 uses STATUS, not FOLLOW_NEW)
+FAKEEH_FLASK_CLOUD_REQUIRED_FIELDS: tuple[str, ...] = (
+    "PROVIDER_NAME",
+    "DEPARTMENT",
+    "ALLOCATION_DATE_TIME",
+    "ALLOCATION_DAY",
+    "MRNO",
+    "TOKEN_NO",
+    "GIVEN_BY",
+    "STATUS",
+    "AGE",
+    "REMARKS",
+    "APPT_ALLOCATION_ID",
+    "FACILITY_NAME",
+    "GENDER",
+    "VISIT_METHOD",
+    "GIVEN_ON",
+    "DOCTORS_NATIONALITY",
+    "APPT_BOOKING_CHANNEL",
+    "CITY",
+    "VISIT_TYPE",
+    "CONTRACT_NAME",
+    "PAYMENT_STATUS",
+)
+
 # Extended 23-field schema (adds patient NATIONALITY + ISVIP after APPT_ALLOCATION_ID)
 NOSHOW_RAW_FIELDS_23: tuple[str, ...] = (
     "PROVIDER_NAME",
@@ -151,6 +203,69 @@ def _extract_values_matrix(inputs: Dict[str, Any]) -> Optional[List[List[Any]]]:
     if isinstance(values[0], list):
         return values
     return [values]
+
+
+def fakeeh_flask_to_epoch_ms(date_val: Any) -> Any:
+    """Match Fakeeh Flask proxy: pd.to_datetime → unix epoch milliseconds."""
+    if date_val is None or date_val == "":
+        return ""
+    if isinstance(date_val, (int, float)):
+        return int(date_val)
+    try:
+        import pandas as pd
+
+        return int(pd.to_datetime(date_val).timestamp() * 1000)
+    except Exception:
+        return ""
+
+
+def _fakeeh_incoming_dict_from_inputs(inputs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Build incoming_field_names dict from nested SageMaker JSON or flat Flask payload."""
+    matrix = _extract_values_matrix(inputs)
+    if matrix is not None:
+        return dict(zip(FAKEEH_FLASK_INCOMING_FIELDS_23, matrix[0]))
+
+    if any(k in inputs for k in FAKEEH_FLASK_CLOUD_REQUIRED_FIELDS):
+        # Preprocessed flat payload from Flask (required_fields keys + ms dates)
+        return dict(inputs)
+
+    if any(k in inputs for k in FAKEEH_FLASK_INCOMING_FIELDS_23):
+        return dict(inputs)
+
+    return None
+
+
+def fakeeh_cloud_model_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Replicate Fakeeh Flask proxy cloud CSV row as a model-column dict.
+
+    Maps incoming 23-field hospital payload → 21 SageMaker columns using the same
+    required_fields order as the Flask app (STATUS value lands in FOLLOW_NEW column).
+    Dates are converted to epoch milliseconds like the cloud path.
+    """
+    if not isinstance(inputs, dict):
+        return {}
+
+    fakeeh = _fakeeh_incoming_dict_from_inputs(inputs)
+    if fakeeh is None:
+        return normalize_noshow_inputs(inputs)
+
+    # Already preprocessed by Flask: keys are cloud required_fields, dates are ms ints
+    if "STATUS" in fakeeh and "FOLLOW_NEW" not in fakeeh and "NATIONALITY" not in fakeeh:
+        return {
+            model_col: fakeeh.get(req_field, "")
+            for model_col, req_field in zip(NOSHOW_RAW_FIELDS_21, FAKEEH_FLASK_CLOUD_REQUIRED_FIELDS)
+        }
+
+    incoming_dict = dict(fakeeh)
+    for date_col in ("ALLOCATION_DATE_TIME", "GIVEN_ON"):
+        if date_col in incoming_dict and not isinstance(incoming_dict[date_col], (int, float)):
+            incoming_dict[date_col] = fakeeh_flask_to_epoch_ms(incoming_dict[date_col])
+
+    return {
+        model_col: incoming_dict.get(req_field, "")
+        for model_col, req_field in zip(NOSHOW_RAW_FIELDS_21, FAKEEH_FLASK_CLOUD_REQUIRED_FIELDS)
+    }
 
 
 def normalize_noshow_inputs(inputs: Dict[str, Any]) -> Dict[str, Any]:

@@ -130,7 +130,7 @@ find_autogluon_python() {
     local env_file="$GATEWAY_DIR/.env"
     if [[ -f "$env_file" ]]; then
         local configured
-        configured="$(grep '^AUTOGUON_PYTHON=' "$env_file" | cut -d= -f2- | tr -d ' \"')"
+        configured="$(grep -E '^(AUTOGLUON_PYTHON|AUTOGUON_PYTHON)=' "$env_file" | head -1 | cut -d= -f2- | tr -d ' \"')"
         if [[ -n "$configured" && -x "$configured" ]] && venv_has_module "$configured" autogluon.tabular; then
             echo "$configured"
             return 0
@@ -268,7 +268,7 @@ install_autogluon_venv() {
     info "Creating venv-autogluon..."
     "$py39" -m venv "$ag_venv"
     AG_PY="$ag_venv/bin/python"
-    "$AG_PY" -m pip install --upgrade pip wheel setuptools
+    "$AG_PY" -m pip install --upgrade pip
     if [[ -d "$ag_wheels" ]] && ls "$ag_wheels"/* &>/dev/null 2>&1; then
         pip_in_venv "$AG_PY" "$ag_wheels" -r "$GATEWAY_DIR/requirements-autogluon.txt"
     else
@@ -307,7 +307,7 @@ set_env() {
     fi
 }
 
-set_env "AUTOGUON_PYTHON" "$AG_PY"
+set_env "AUTOGLUON_PYTHON" "$AG_PY"
 # Do not overwrite LOCAL_MODELS_DIR if already set for old deploy
 if ! grep -q "^LOCAL_MODELS_DIR=" "$ENV_FILE" 2>/dev/null; then
     set_env "LOCAL_MODELS_DIR" "$MODELS_BASE"
@@ -315,7 +315,7 @@ fi
 
 chown "$GATEWAY_USER:$GATEWAY_USER" "$ENV_FILE"
 chmod 640 "$ENV_FILE"
-success "AUTOGUON_PYTHON=$AG_PY"
+success "AUTOGLUON_PYTHON=$AG_PY"
 
 # ── 6. Restart ───────────────────────────────────────────────────────────────
 step "6 / 6  Restart and verify"
@@ -332,7 +332,7 @@ else
 fi
 
 info "Smoke test..."
-sudo -u "$GATEWAY_USER" env AUTOGUON_PYTHON="$AG_PY" bash -c "
+sudo -u "$GATEWAY_USER" env AUTOGLUON_PYTHON="$AG_PY" bash -c "
     cd $GATEWAY_DIR
     $GATEWAY_PY -c \"
 from models.registry import ModelRegistry

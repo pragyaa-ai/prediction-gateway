@@ -223,7 +223,7 @@ if command -v python3.9 &>/dev/null && [[ -f "$GATEWAY_DIR/requirements-autogluo
     rm -rf "$AG_VENV"
     sudo -u "$GATEWAY_USER" python3.9 -m venv "$AG_VENV"
     info "Installing requirements-autogluon.txt (may take several minutes)..."
-    sudo -u "$GATEWAY_USER" "$AG_VENV/bin/pip" install --upgrade pip wheel setuptools -q
+    sudo -u "$GATEWAY_USER" "$AG_VENV/bin/pip" install --upgrade pip -q
     sudo -u "$GATEWAY_USER" "$AG_VENV/bin/pip" install -r "$GATEWAY_DIR/requirements-autogluon.txt"
     success "AutoGluon venv: $AG_VENV"
 else
@@ -260,7 +260,7 @@ set_env_var() {
     fi
 }
 if [[ -x "$AG_VENV/bin/python" ]]; then
-    set_env_var "AUTOGUON_PYTHON" "$AG_VENV/bin/python"
+    set_env_var "AUTOGLUON_PYTHON" "$AG_VENV/bin/python"
 fi
 set_env_var "LOCAL_MODELS_DIR" "$GATEWAY_DIR/models/local-models"
 chown "$GATEWAY_USER:$GATEWAY_USER" "$ENV_FILE"
@@ -320,7 +320,7 @@ EOF
 
 if [[ -x "$AG_VENV/bin/python" ]]; then
     cat >> "$SYSTEMD_UNIT" <<EOF
-Environment=AUTOGUON_PYTHON=$AG_VENV/bin/python
+Environment=AUTOGLUON_PYTHON=$AG_VENV/bin/python
 EOF
 fi
 

@@ -1,8 +1,10 @@
-from pydantic_settings import BaseSettings
+from pydantic import AliasChoices, Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
     # Gateway
     gateway_host: str = "0.0.0.0"
     gateway_port: int = 8000
@@ -13,7 +15,10 @@ class Settings(BaseSettings):
 
     # Python binary with AutoGluon installed (requirements-autogluon.txt).
     # Used for no_show_fakeeh_ksa_local when autogluon is not in the main venv.
-    autogluon_python: Optional[str] = None
+    autogluon_python: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("AUTOGLUON_PYTHON", "AUTOGUON_PYTHON"),
+    )
 
     # OpenSearch
     opensearch_host: str = "localhost"
@@ -42,9 +47,4 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     from_email: str = "noreply@pragyaa.ai"
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
-
-
 settings = Settings()

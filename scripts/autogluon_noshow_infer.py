@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Standalone AutoGluon no-show inference (used when AUTOGUON_PYTHON points here).
+Standalone AutoGluon no-show inference (used when AUTOGLUON_PYTHON points here).
 
 Reads JSON from stdin:
   {"model_dir": "...", "model_name": "WeightedEnsemble_L3_FULL", "inputs": {...}}
@@ -44,4 +44,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception:
+        import traceback
+
+        traceback.print_exc(file=sys.stderr)
+        raise SystemExit(1)
