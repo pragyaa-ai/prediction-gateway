@@ -16,6 +16,7 @@ import sys
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
@@ -29,10 +30,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from adapters.delay_features import (  # noqa: E402
-    prepare_fakeeh_delay_cloud_payload,
-    prepare_fakeeh_delay_model_input,
-)
+from adapters.delay_features import prepare_fakeeh_delay_cloud_payload  # noqa: E402
+from adapters.sagemaker_format import parse_regression_prediction  # noqa: E402
 
 app = Flask(__name__)
 logging.basicConfig(
@@ -140,13 +139,26 @@ def save_to_opensearch(input_data: dict, prediction) -> None:
         logger.error("Error saving data to OpenSearch: %s", e)
 
 
+def _local_delay_minutes(gateway_body: dict) -> Optional[float]:
+    """Extract numeric delay minutes from gateway JSON (SageMaker CSV or float)."""
+    raw = gateway_body.get("prediction")
+    if isinstance(raw, (int, float)):
+        return float(raw)
+    if isinstance(raw, str):
+        parsed = parse_regression_prediction(raw)
+        if parsed and parsed.get("predicted_value") is not None:
+            return float(parsed["predicted_value"])
+        try:
+            return float(raw.split(",")[0])
+        except (TypeError, ValueError, IndexError):
+            return None
+    return None
+
+
 def invoke_local_gateway_async(raw_input: dict) -> None:
     def _run() -> None:
-        # Same 161-column wide row the cloud API receives
-        payload = {
-            "client_id": "fakeeh-flask-delay-proxy",
-            "inputs": prepare_fakeeh_delay_model_input(raw_input),
-        }
+        # Raw appointment JSON — gateway engineers 161-col wide row once (single source of truth).
+        payload = {"client_id": "fakeeh-flask-delay-proxy", "inputs": raw_input}
         try:
             response = requests.post(
                 LOCAL_GATEWAY_URL,
@@ -163,7 +175,11 @@ def invoke_local_gateway_async(raw_input: dict) -> None:
                 )
                 return
             body = response.json() if response.content else {}
-            logger.info("Local delay gateway prediction: %s", body.get("prediction"))
+            minutes = _local_delay_minutes(body)
+            if minutes is not None:
+                logger.info("Local delay gateway prediction: %.4f min", minutes)
+            else:
+                logger.info("Local delay gateway prediction: %s", body.get("prediction"))
         except requests.RequestException as e:
             logger.error("Local delay gateway error: %s", e)
 

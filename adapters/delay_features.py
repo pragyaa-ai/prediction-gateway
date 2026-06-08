@@ -685,8 +685,25 @@ def prepare_fakeeh_delay_cloud_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _is_hospital_appointment(raw: Dict[str, Any]) -> bool:
+    """True when payload is raw Fakeeh appointment JSON (not pre-engineered wide row)."""
+    return any(
+        k in raw
+        for k in (
+            "ALLOCATION_DATE_TIME",
+            "ALLOCATION_DATETIME",
+            "MRNO",
+            "PROVIDER_NAME",
+            "APPT_ALLOCATION_ID",
+        )
+    )
+
+
 def _wide_row_from_engineered(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure a complete 161-column wide row for delay_fakeeh_ksa_local model.pkl."""
+    # Always engineer from hospital JSON when present (avoids mangling wide rows through automl).
+    if _is_hospital_appointment(raw):
+        return prepare_fakeeh_delay_model_input(raw)
     if _has_wide_features(raw):
         row: Dict[str, Any] = {}
         for col in FAKEEH_DELAY_MODEL_COLUMNS:
