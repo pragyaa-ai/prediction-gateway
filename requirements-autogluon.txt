@@ -17,3 +17,6 @@ fastcore>=1.5.29,<1.6
 fastdownload>=0.0.5
 fastprogress>=1.0.0
 xgboost>=1.7.0,<2.0.0
+# Python 3.9 only — spacy 3.8.8+ pulls thinc>=8.3.12 which needs Python 3.10+
+spacy==3.8.7
+thinc==8.3.4
