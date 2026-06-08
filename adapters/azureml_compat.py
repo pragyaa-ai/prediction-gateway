@@ -91,23 +91,31 @@ def _patch_xgboost_booster() -> None:
             if isinstance(state, dict) and "handle" in state:
                 b = _try_load_xgb_from_json_state(state)
                 if b is not None:
-                    # Transfer all attributes from b to self WITHOUT double-freeing.
-                    # Copy handle value into a fresh ctypes pointer that self owns,
-                    # then invalidate b's handle so its __del__ doesn't free it.
-                    import ctypes
+                    # Avoid brittle ctypes handle copying (breaks on xgboost 2.x).
+                    # Instead: serialise b to a temp UBJ file and reload into self.
+                    # pickle uses __new__ so self has no allocated handle yet → __init__ is safe.
+                    import os
+                    import tempfile
 
-                    _handle_attr = "handle" if hasattr(b, "handle") else "_handle"
-                    self.__dict__.update(
-                        {k: v for k, v in b.__dict__.items() if k != _handle_attr}
-                    )
-                    # Create an independent ctypes wrapper so self owns the resource.
-                    # Nullify b's handle first so its __del__ won't call XGBoosterFree.
-                    raw_handle = getattr(b, _handle_attr)
-                    setattr(b, _handle_attr, None)  # prevent b.__del__ from freeing
-                    import ctypes as _ct
-                    setattr(self, _handle_attr, _ct.c_void_p(raw_handle.value))
-                    self._load_failed = False  # type: ignore[attr-defined]
-                    return
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".ubj") as fh:
+                        fname = fh.name
+                    try:
+                        b.save_model(fname)
+                        _xc.Booster.__init__(self)   # allocates fresh C++ handle
+                        self.load_model(fname)
+                        self.best_iteration = state.get("best_iteration", 0)
+                        self.best_ntree_limit = state.get("best_ntree_limit", 0)
+                        self._load_failed = False  # type: ignore[attr-defined]
+                        return
+                    except Exception:
+                        self._load_failed = True  # type: ignore[attr-defined]
+                        self.handle = None  # type: ignore[attr-defined]
+                        return
+                    finally:
+                        try:
+                            os.unlink(fname)
+                        except Exception:
+                            pass
             try:
                 _orig(self, state)
             except Exception:
