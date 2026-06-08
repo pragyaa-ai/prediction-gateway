@@ -12,6 +12,8 @@ Environment:
   LOCAL_GATEWAY_URL      default http://127.0.0.1:8000/v1/predict/no_show_fakeeh_ksa_local
   LOCAL_GATEWAY_ENABLED  default true
   API_GATEWAY_URL        cloud endpoint (unchanged)
+  SSL_CERT / SSL_KEY     optional TLS cert + key for HTTPS (same as legacy proxy)
+  FLASK_USE_SSL          default true when SSL_CERT and SSL_KEY exist
 """
 from __future__ import annotations
 
@@ -320,8 +322,27 @@ def predict():
 
 
 if __name__ == "__main__":
+    host = os.getenv("FLASK_HOST", "0.0.0.0")
+    port = int(os.getenv("FLASK_PORT", "5010"))
+    debug = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
+
+    ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
+    ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
+    use_ssl_env = os.getenv("FLASK_USE_SSL", "true").lower() in ("1", "true", "yes")
+    ssl_context = None
+    if use_ssl_env and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
+        ssl_context = (ssl_cert, ssl_key)
+        logger.info("Starting HTTPS on %s:%s (cert=%s)", host, port, ssl_cert)
+    else:
+        logger.warning(
+            "Starting HTTP on %s:%s (set SSL_CERT/SSL_KEY or FLASK_USE_SSL=false to silence)",
+            host,
+            port,
+        )
+
     app.run(
-        host=os.getenv("FLASK_HOST", "0.0.0.0"),
-        port=int(os.getenv("FLASK_PORT", "5010")),
-        debug=os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes"),
+        host=host,
+        port=port,
+        debug=debug,
+        ssl_context=ssl_context,
     )
