@@ -326,16 +326,25 @@ if __name__ == "__main__":
     port = int(os.getenv("FLASK_PORT", "5010"))
     debug = os.getenv("FLASK_DEBUG", "true").lower() in ("1", "true", "yes")
 
-    # Same defaults as legacy Fakeeh proxy (override with SSL_CERT / SSL_KEY if needed)
     ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
     ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
     use_ssl = os.getenv("FLASK_USE_SSL", "true").lower() in ("1", "true", "yes")
-    ssl_context = (ssl_cert, ssl_key) if use_ssl else None
 
-    if ssl_context:
-        logger.info("Starting HTTPS on %s:%s", host, port)
+    ssl_context = None
+    if use_ssl:
+        if os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
+            ssl_context = (ssl_cert, ssl_key)
+            logger.info("HTTPS  https://%s:%s/predict/getPrediction", host, port)
+        else:
+            logger.error(
+                "SSL cert/key not found (%s, %s) — falling back to HTTP. "
+                "Use curl http://... or set SSL_CERT/SSL_KEY.",
+                ssl_cert,
+                ssl_key,
+            )
+            logger.info("HTTP   http://%s:%s/predict/getPrediction", host, port)
     else:
-        logger.info("Starting HTTP on %s:%s (FLASK_USE_SSL=false)", host, port)
+        logger.info("HTTP   http://%s:%s/predict/getPrediction (FLASK_USE_SSL=false)", host, port)
 
     app.run(
         host=host,
