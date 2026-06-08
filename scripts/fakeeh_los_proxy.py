@@ -429,41 +429,80 @@ def _build_final_payload(cleaned_raw: dict, cleaned_for_encoding: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# OpenSearch
+# OpenSearch — same field map + index schema as original LengthOfStay proxy
 # ---------------------------------------------------------------------------
 
-def save_to_opensearch(input_data: dict, prediction) -> None:
-    try:
-        def sg(key):
-            return input_data.get(key) if isinstance(input_data, dict) else None
+INPUT_TO_OS_FIELD_MAP = {
+    "mrno": "MRNO",
+    "age": "AGE",
+    "maritaL_STATUS": "MARITAL_STATUS",
+    "nationality": "NATIONALITY",
+    "bmi": "BMI",
+    "admissioN_TYPE": "ADMISSION_TYPE",
+    "admissioN_LEVEL": "ADMISSION_LEVEL",
+    "rooM_TYPE": "ROOM_TYPE",
+    "sourcE_OF_ADMN": "SOURCE_OF_ADMN",
+    "primary": "PRIMARY",
+    "secondary": "SECONDARY",
+    "surgerY_NAME": "SURGERY_NAME",
+    "payer": "PAYER",
+    "previouS_IP": "PREVIOUS_IP",
+    "sodium": "SODIUM",
+    "glucose": "GLUCOSE",
+    "blooD_UREA_NITROGEN": "BLOOD_UREA_NITROGEN",
+    "c_REACTIVE_PROTEIN": "C_REACTIVE_PROTEIN",
+    "creatinine": "CREATININE",
+    "wbc": "WBC",
+    "plateletS_COUNT": "PLATELETS_COUNT",
+    "hematogY_TESTS": "HEMATOLOGY_TESTS",
+    "chemistrY_TESTS": "CHEMISTRY_TESTS",
+    "immunologY_TESTS": "IMMUNOLOGY_TESTS",
+    "culturE_TESTS": "CULTURE_TESTS",
+    "oxygeN_SATURATION": "OXYGEN_SATURATION",
+    "temperature": "TEMPERATURE",
+    "bpsystolic": "BPSYSTOLIC",
+    "bpdiaSTOLIC": "BPDIASTOLIC",
+    "pulse": "PULSE",
+    "respiration": "RESPIRATION",
+    "radiologY_TESTS": "RADIOLOGY_TESTS",
+    "totaL_MEDICINE_ORDERED": "TOTAL_MEDICINE_ORDERED",
+    "medicatioN_TYPE": "MEDICATION_TYPE",
+    "clinicaL_WARNING": "CLINICAL_WARNING",
+    "expired": "EXPIRED",
+    "loS_GROUP": "LOS_GROUP",
+    "iP_IN_PREVIOUS_30_DAYS": "IP_IN_PREVIOUS_30_DAYS",
+    "hospitalizatioN_PREVIOUS_YEAR": "HOSPITALIZATION_PREVIOUS_YEAR",
+}
 
-        doc = {
-            "MRNO": str(sg("MRNO")) if sg("MRNO") is not None else None,
-            "AGE": sg("AGE"),
-            "MARITAL_STATUS": sg("MARITAL_STATUS"),
-            "NATIONALITY": sg("NATIONALITY"),
-            "BMI": sg("BMI"),
-            "ADMISSION_TYPE": sg("ADMISSION_TYPE"),
-            "ADMISSION_LEVEL": sg("ADMISSION_LEVEL"),
-            "ROOM_TYPE": sg("ROOM_TYPE"),
-            "SOURCE_OF_ADMN": sg("SOURCE_OF_ADMN"),
-            "PRIMARY": sg("PRIMARY"),
-            "SECONDARY": sg("SECONDARY"),
-            "SURGERY_NAME": sg("SURGERY_NAME"),
-            "PAYER": sg("PAYER"),
-            "PREVIOUS_IP": sg("PREVIOUS_IP"),
-            "EXPIRED": sg("EXPIRED"),
-            "LOS_GROUP": sg("LOS_GROUP"),
-            "IP_IN_PREVIOUS_30_DAYS": sg("IP_IN_PREVIOUS_30_DAYS"),
-            "HOSPITALIZATION_PREVIOUS_YEAR": sg("HOSPITALIZATION_PREVIOUS_YEAR"),
-            "LOS_Prediction": float(prediction) if prediction is not None else None,
-            "ingest_ts_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
+
+def _raw_get(raw: dict, *keys):
+    """Read from raw request using exact or case-insensitive key."""
+    if not isinstance(raw, dict):
+        return None
+    lc = {str(k).lower(): k for k in raw.keys()}
+    for key in keys:
+        if key in raw:
+            return raw[key]
+        found = lc.get(str(key).lower())
+        if found is not None:
+            return raw[found]
+    return None
+
+
+def save_to_opensearch(raw_input: dict, prediction) -> None:
+    """Save raw API input + LOS prediction to length-of-stay-index (original schema)."""
+    try:
+        os_data = {}
+        for api_key, os_field in INPUT_TO_OS_FIELD_MAP.items():
+            os_data[os_field] = _raw_get(raw_input, api_key, os_field)
+
+        os_data["LOS_Prediction"] = float(prediction) if prediction is not None else None
+        os_data["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         url = f"{OPENSEARCH_URL.rstrip('/')}/{INDEX_NAME}/_doc/"
         resp = session.post(
             url,
-            json=doc,
+            json=os_data,
             headers=HEADERS,
             auth=HTTPBasicAuth(USERNAME, PASSWORD),
             verify=False,
@@ -471,7 +510,7 @@ def save_to_opensearch(input_data: dict, prediction) -> None:
         )
         if not (200 <= resp.status_code < 300):
             raise RuntimeError(f"Failed to index data: {resp.status_code} {resp.text}")
-        logger.info("Indexed LOS prediction in OpenSearch")
+        logger.info("Indexed LOS record in OpenSearch index %s", INDEX_NAME)
     except Exception as e:
         logger.error("Error saving data to OpenSearch: %s", e)
 
@@ -598,7 +637,7 @@ def get_length_of_stay():
             logger.error("Predicted_length_of_stay not found in response: %s", json.dumps(outer, default=str))
             return jsonify({"error": "Predicted_length_of_stay not found in cloud response"}), 500
 
-        save_to_opensearch(final_payload, predicted_los)
+        save_to_opensearch(data, predicted_los)
 
         return app.response_class(
             response=json.dumps({"Length of Stay": round(float(predicted_los), 2)}, indent=4),
