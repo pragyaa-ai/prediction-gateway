@@ -420,6 +420,19 @@ def _voting_predict(self: Any, X: Any) -> np.ndarray:
             pass
     if not preds:
         raise RuntimeError("PreFittedSoftVotingRegressor: all sub-estimators failed")
+
+    # Robust ensemble: if predictions are wildly spread (e.g. some XGBoost sub-models
+    # loaded from old pre-1.6 format give garbage on xgboost 2.x), fall back to the
+    # highest-weighted estimator only — it is typically the best model (LightGBM) and
+    # loads correctly on all xgboost versions.
+    if len(preds) > 1:
+        all_vals = np.array([float(p[0]) for p in preds])
+        spread = float(all_vals.max() - all_vals.min())
+        if spread > 100:
+            best_idx = int(np.argmax(valid_w))
+            preds = [preds[best_idx]]
+            valid_w = [valid_w[best_idx]]
+
     valid_w_arr = np.array(valid_w)
     valid_w_arr = valid_w_arr / valid_w_arr.sum()
     return np.average(np.column_stack(preds), axis=1, weights=valid_w_arr)
