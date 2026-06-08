@@ -214,11 +214,14 @@ def _sklearn_predict(model: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 def _automl_pipeline_predict(model: Any, inputs: Dict[str, Any]) -> Dict[str, Any]:
     """Run inference on an Azure AutoML RegressionPipeline loaded by azureml_compat."""
-    from adapters.delay_features import DELAY_KSA_AUTOML_COLUMNS
+    from adapters.delay_features import FAKEEH_DELAY_MODEL_COLUMNS
 
-    # Preserve column order when all keys are known (delay KSA schema)
-    if all(k in inputs for k in DELAY_KSA_AUTOML_COLUMNS):
-        X = pd.DataFrame([[inputs[k] for k in DELAY_KSA_AUTOML_COLUMNS]], columns=list(DELAY_KSA_AUTOML_COLUMNS))
+    # delay_fakeeh_ksa_local model.pkl expects the 161-column wide row (cloud parity)
+    if all(k in inputs for k in FAKEEH_DELAY_MODEL_COLUMNS):
+        X = pd.DataFrame(
+            [[inputs[k] for k in FAKEEH_DELAY_MODEL_COLUMNS]],
+            columns=list(FAKEEH_DELAY_MODEL_COLUMNS),
+        )
     else:
         X = pd.DataFrame([inputs])
     preds = model.predict(X)

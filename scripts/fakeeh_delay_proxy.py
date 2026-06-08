@@ -29,7 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from adapters.delay_features import prepare_fakeeh_delay_cloud_payload  # noqa: E402
+from adapters.delay_features import (  # noqa: E402
+    prepare_fakeeh_delay_cloud_payload,
+    prepare_fakeeh_delay_model_input,
+)
 
 app = Flask(__name__)
 logging.basicConfig(
@@ -139,7 +142,11 @@ def save_to_opensearch(input_data: dict, prediction) -> None:
 
 def invoke_local_gateway_async(raw_input: dict) -> None:
     def _run() -> None:
-        payload = {"client_id": "fakeeh-flask-delay-proxy", "inputs": raw_input}
+        # Same 161-column wide row the cloud API receives
+        payload = {
+            "client_id": "fakeeh-flask-delay-proxy",
+            "inputs": prepare_fakeeh_delay_model_input(raw_input),
+        }
         try:
             response = requests.post(
                 LOCAL_GATEWAY_URL,

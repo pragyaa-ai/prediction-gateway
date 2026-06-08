@@ -505,14 +505,8 @@ def _parse_fakeeh_delay_age(age_str: Any) -> float:
 
 
 def _parse_fakeeh_delay_datetime(dt_str: Any) -> Optional[datetime]:
-    """Match Fakeeh delay Flask proxy date parsing (%m/%d/%Y %H:%M only)."""
-    if not dt_str:
-        return None
-    text = str(dt_str).strip()
-    try:
-        return datetime.strptime(text, "%m/%d/%Y %H:%M")
-    except ValueError:
-        return None
+    """Parse appointment datetimes (ISO, m/d/Y, d-m-Y, etc.) for delay feature engineering."""
+    return _parse_datetime(dt_str)
 
 
 def _parse_age_years_float(age_str: Any) -> float:
@@ -691,14 +685,24 @@ def prepare_fakeeh_delay_cloud_payload(data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _wide_row_from_engineered(raw: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure a complete 161-column wide row for delay_fakeeh_ksa_local model.pkl."""
+    if _has_wide_features(raw):
+        row: Dict[str, Any] = {}
+        for col in FAKEEH_DELAY_MODEL_COLUMNS:
+            if col in raw:
+                row[col] = raw[col]
+            elif col in FAKEEH_DELAY_STRING_COLUMNS:
+                row[col] = ""
+            else:
+                row[col] = 0
+        return row
+    return prepare_fakeeh_delay_model_input(raw)
+
+
 def engineer_delay_features(inputs: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Build input row for delay_fakeeh_ksa_local (Azure AutoML pickle on disk).
+    Build input row for delay_fakeeh_ksa_local (161-column wide schema in model.pkl).
     """
     raw = normalize_delay_inputs(inputs)
-
-    if _has_wide_features(raw):
-        # Legacy wide-row callers — still unsupported by on-disk AutoML model
-        return prepare_delay_ksa_automl_input(raw)
-
-    return prepare_delay_ksa_automl_input(raw)
+    return _wide_row_from_engineered(raw)

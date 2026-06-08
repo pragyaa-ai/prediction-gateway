@@ -80,7 +80,7 @@ los_fakeeh_ksa_local:
   output_mapper: los_local
   enabled: true
 
-# Azure AutoML Delay Arrival model (local) – full on-disk pipeline, no cloud dependency.
+# Azure AutoML Delay Arrival model (local) – 161-column wide schema (same as cloud proxy).
 delay_fakeeh_ksa_local:
   provider: local_artifact
   endpoint_url: ""

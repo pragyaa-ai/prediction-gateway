@@ -368,7 +368,7 @@ def no_show_fakeeh_output(response: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def delay_local_input(inputs: Dict[str, Any]) -> Dict[str, Any]:
-    """Map raw / integration appointment JSON to delay AutoML pipeline columns."""
+    """Map raw appointment JSON to 161-column wide row for delay_fakeeh_ksa_local."""
     from adapters.delay_features import engineer_delay_features
 
     return engineer_delay_features(inputs)
