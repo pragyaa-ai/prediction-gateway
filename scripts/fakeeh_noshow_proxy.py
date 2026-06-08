@@ -50,7 +50,7 @@ LOCAL_GATEWAY_ENABLED = os.getenv("LOCAL_GATEWAY_ENABLED", "true").lower() in (
     "yes",
 )
 
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://192.168.111.6:9200/")
+OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
 INDEX_NAME = os.getenv("OPENSEARCH_INDEX", "fakeeh-prediction-no-show-index2")
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 USERNAME = os.getenv("OPENSEARCH_USER", "admin")
