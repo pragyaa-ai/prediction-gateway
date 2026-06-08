@@ -82,42 +82,16 @@ def _try_load_xgb_from_json_state(state: dict) -> "Any | None":
 
 
 def _patch_xgboost_booster() -> None:
+    """Patch Booster.__setstate__ to handle pre-1.6 JSON format on xgboost 2.x."""
     try:
         import xgboost.core as _xc
 
         _orig = _xc.Booster.__setstate__
 
         def _safe_setstate(self: Any, state: Any) -> None:
-            if isinstance(state, dict) and "handle" in state:
-                b = _try_load_xgb_from_json_state(state)
-                if b is not None:
-                    # Avoid brittle ctypes handle copying (breaks on xgboost 2.x).
-                    # Instead: serialise b to a temp UBJ file and reload into self.
-                    # pickle uses __new__ so self has no allocated handle yet → __init__ is safe.
-                    import os
-                    import tempfile
-
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".ubj") as fh:
-                        fname = fh.name
-                    try:
-                        b.save_model(fname)
-                        _xc.Booster.__init__(self)   # allocates fresh C++ handle
-                        self.load_model(fname)
-                        self.best_iteration = state.get("best_iteration", 0)
-                        self.best_ntree_limit = state.get("best_ntree_limit", 0)
-                        self._load_failed = False  # type: ignore[attr-defined]
-                        return
-                    except Exception:
-                        self._load_failed = True  # type: ignore[attr-defined]
-                        self.handle = None  # type: ignore[attr-defined]
-                        return
-                    finally:
-                        try:
-                            os.unlink(fname)
-                        except Exception:
-                            pass
             try:
                 _orig(self, state)
+                self._load_failed = False  # type: ignore[attr-defined]
             except Exception:
                 self._load_failed = True  # type: ignore[attr-defined]
                 self._handle = None  # type: ignore[attr-defined]
@@ -125,6 +99,69 @@ def _patch_xgboost_booster() -> None:
         _xc.Booster.__setstate__ = _safe_setstate  # type: ignore[method-assign]
     except ImportError:
         pass
+
+
+def _reconvert_xgboost_boosters(obj: Any, _visited: "set[int] | None" = None) -> None:
+    """
+    Post-load fix for xgboost 2.x loading old pre-1.6 pickle format.
+
+    xgboost 2.x can load the old JSON model format (with a deprecation warning)
+    but may predict incorrectly due to internal format differences.  Re-saving each
+    booster to UBJ and reloading in-place normalises the format and restores correct
+    prediction behaviour.  Safe to call on xgboost 1.x too (no-op if save succeeds).
+    """
+    import os
+    import tempfile
+
+    if _visited is None:
+        _visited = set()
+    oid = id(obj)
+    if oid in _visited:
+        return
+    _visited.add(oid)
+
+    cls_name = type(obj).__name__
+
+    # XGBRegressor / XGBClassifier: fix the booster in-place
+    if cls_name in ("XGBRegressor", "XGBClassifier", "XGBModel") or (
+        hasattr(obj, "_Booster") and obj._Booster is not None
+    ):
+        try:
+            booster = getattr(obj, "_Booster", None)
+            if booster is None:
+                booster = obj.get_booster()
+            if booster is not None:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".ubj") as fh:
+                    fname = fh.name
+                try:
+                    booster.save_model(fname)
+                    booster.load_model(fname)
+                finally:
+                    try:
+                        os.unlink(fname)
+                    except OSError:
+                        pass
+        except Exception:
+            pass
+        return  # don't recurse into XGB internals
+
+    # Recurse into child objects
+    for attr in ("pipeline", "model"):
+        child = getattr(obj, attr, None)
+        if child is not None and not isinstance(
+            child, (str, bytes, int, float, bool, type(None), np.ndarray)
+        ):
+            _reconvert_xgboost_boosters(child, _visited)
+
+    if hasattr(obj, "steps"):
+        for _, step in obj.steps:
+            _reconvert_xgboost_boosters(step, _visited)
+
+    if hasattr(obj, "_wrappedEnsemble"):
+        ens = obj._wrappedEnsemble
+        if hasattr(ens, "estimators_"):
+            for est in ens.estimators_:
+                _reconvert_xgboost_boosters(est, _visited)
 
 
 # ---------------------------------------------------------------------------
@@ -555,4 +592,5 @@ def load_azure_automl_pickle(path: str) -> Any:
         model = pickle.load(f)
 
     _patch_loaded_model(model)
+    _reconvert_xgboost_boosters(model)  # fix old pre-1.6 JSON boosters for xgboost 2.x
     return model
