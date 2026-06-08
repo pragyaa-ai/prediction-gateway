@@ -29,6 +29,14 @@ echo "lightgbm:"
 PAYLOAD='{"client_id":"verify","inputs":{"MRNO":"2247106","PROVIDER_NAME":"Arwa Faez Ghaleb Lardhi","DEPARTMENT":"Adult Cardiology","APPT_ALLOCATION_ID":"16912366","ALLOCATION_DATE_TIME":"2026-05-25T21:15:00","ALLOCATION_DAY":"Monday","TOKEN_NO":"86A","VIP":0,"GIVEN_BY":"Administrator","FOLLOW_NEW":"N","AGE":"17y","NATIONALITY":"SAUDI","FACILITY_NAME":"DSFH","GENDER":"Female","VISIT_METHOD":"PHYSICAL","GIVEN_ON":"2026-05-25T13:41:31","DOCTORS_NATIONALITY":"YEMENI","APPT_BOOKING_CHANNEL":"OTHERS","CITY":"Jeddah","PAYMENT_STATUS":"Not Paid","VISIT_TYPE":"CASH","CONTRACT_NAME":null}}'
 
 echo ""
+echo "Environment (.env):"
+grep "^LOCAL_MODELS_DIR=" "$GATEWAY_DIR/.env" 2>/dev/null || echo "  LOCAL_MODELS_DIR not set (uses $GATEWAY_DIR/models/local-models)"
+
+echo ""
+echo "Resolved artifact (gateway process view):"
+sudo -u mlgateway bash -c "cd '$GATEWAY_DIR' && '$GATEWAY_DIR/venv/bin/python' scripts/debug-delay-inference.py" || true
+
+echo ""
 echo "POST $GATEWAY_URL/v1/predict/delay_fakeeh_ksa_local"
 RESP=$(curl -sf -X POST "$GATEWAY_URL/v1/predict/delay_fakeeh_ksa_local" \
   -H "Content-Type: application/json" \
