@@ -2,14 +2,8 @@
 """
 Fakeeh Length-of-Stay Flask proxy.
 
-Cloud (primary): POST encoded payload → apis.pragyaa.ai/stay/predict
-Local (async):   POST encoded payload → ml-gateway los_fakeeh_ksa_local
-
-Client response is cloud-only.  Local runs in a background thread.
-
-Feature engineering (normalize → encode → LOS_GROUP) mirrors the
-LengthOfStay reference proxy exactly, producing the same final_payload
-that is sent to both the cloud API and the local gateway.
+Core logic matches length_of_stay_api.py exactly (encode → cloud → OpenSearch).
+Additions: SSL (same certs as delay proxy), async local ml-gateway call.
 """
 from __future__ import annotations
 
@@ -19,12 +13,13 @@ import os
 import re
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 os.environ.setdefault("PYTHONUNBUFFERED", "1")
 
+import pandas as pd
 import requests
 from flask import Flask, jsonify, request
 from requests.adapters import HTTPAdapter
@@ -32,27 +27,28 @@ from requests.auth import HTTPBasicAuth
 from urllib3.util.retry import Retry
 
 ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from adapters.sagemaker_format import parse_regression_prediction  # noqa: E402
+from los_encoder import LOSDataEncoder  # noqa: E402 — must live in scripts/
 
 app = Flask(__name__)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    stream=sys.stdout,
-    force=True,
-)
-logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Config (all overridable via env vars)
-# ---------------------------------------------------------------------------
-CLOUD_REQUEST_TIMEOUT = int(os.getenv("CLOUD_REQUEST_TIMEOUT", "30"))
-OPENSEARCH_TIMEOUT = int(os.getenv("OPENSEARCH_TIMEOUT", "15"))
-
+# API Gateway / Lambda endpoint
 API_GATEWAY_URL = os.getenv("LOS_CLOUD_URL", "https://apis.pragyaa.ai/stay/predict")
+
+# OpenSearch Configuration (default 10.1.186.40 — override via OPENSEARCH_URL)
+OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
+INDEX_NAME = os.getenv("LOS_OPENSEARCH_INDEX", "length-of-stay-index")
+HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
+USERNAME = os.getenv("OPENSEARCH_USER", "admin")
+PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "admin")
+
+# Local ml-gateway (async, does not affect client response)
 LOCAL_GATEWAY_URL = os.getenv(
     "LOS_LOCAL_GATEWAY_URL",
     "http://127.0.0.1:8000/v1/predict/los_fakeeh_ksa_local",
@@ -61,52 +57,40 @@ LOCAL_GATEWAY_ENABLED = os.getenv("LOCAL_GATEWAY_ENABLED", "true").lower() in (
     "1", "true", "yes",
 )
 
-OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
-INDEX_NAME = os.getenv("LOS_OPENSEARCH_INDEX", "length-of-stay-index")
-HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
-USERNAME = os.getenv("OPENSEARCH_USER", "admin")
-PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "admin")
-
-# Path to derived_mapping.json (override via env var; falls back to scripts/ dir)
-DERIVED_MAPPING_PATH = os.getenv(
-    "LOS_DERIVED_MAPPING_PATH",
-    str(Path(__file__).resolve().parent / "derived_mapping.json"),
-)
-
-# Optional encoder import — only needed if derived_mapping.json is present
-try:
-    _encoder_dir = str(Path(DERIVED_MAPPING_PATH).parent)
-    if _encoder_dir not in sys.path:
-        sys.path.insert(0, _encoder_dir)
-    from los_encoder import LOSDataEncoder  # type: ignore
-    import pandas as pd  # required by LOSDataEncoder
-    _encoder = LOSDataEncoder(DERIVED_MAPPING_PATH) if os.path.isfile(DERIVED_MAPPING_PATH) else None
-    if _encoder:
-        logger.info("LOSDataEncoder loaded from %s", DERIVED_MAPPING_PATH)
-    else:
-        logger.warning("derived_mapping.json not found at %s — encoder disabled", DERIVED_MAPPING_PATH)
-except Exception as _enc_err:
-    logger.warning("LOSDataEncoder unavailable (%s) — encoded fields will use rule-based fallback", _enc_err)
-    _encoder = None
-    pd = None  # type: ignore
-
-# ---------------------------------------------------------------------------
-# Retry-enabled session for OpenSearch
-# ---------------------------------------------------------------------------
+# Setup retry strategy for OpenSearch requests
 retry_strategy = Retry(
     total=3,
     backoff_factor=1,
     status_forcelist=[500, 502, 503, 504],
     allowed_methods=["HEAD", "GET", "POST", "PUT", "DELETE"],
 )
-_adapter = HTTPAdapter(max_retries=retry_strategy)
+adapter = HTTPAdapter(max_retries=retry_strategy)
 session = requests.Session()
-session.mount("http://", _adapter)
-session.mount("https://", _adapter)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
 
-# ---------------------------------------------------------------------------
-# EXACT model schema (keys + defaults, keeps order)
-# ---------------------------------------------------------------------------
+# Path to derived mapping JSON (always relative to this script's directory)
+DERIVED_MAPPING_PATH = os.getenv(
+    "LOS_DERIVED_MAPPING_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "derived_mapping.json"),
+)
+
+# Initialize encoder
+encoder = LOSDataEncoder(DERIVED_MAPPING_PATH)
+
+# Logging setup (console + file) — same as original
+_log_dir = os.path.dirname(os.path.abspath(__file__))
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(_log_dir, "length_of_stay_api.log"), mode="a"),
+    ],
+    force=True,
+)
+
+# EXACT model schema required (keeps order)
 DEFAULT_INPUT_SCHEMA = {
     "Column1": 0,
     "MRNO": 0,
@@ -165,19 +149,9 @@ DEFAULT_INPUT_SCHEMA = {
     "PLATELETS_COUNT_available": 0,
 }
 
-FIELDS_STRIP_UNITS = {
-    "SODIUM",
-    "BLOOD_UREA_NITROGEN",
-    "C_REACTIVE_PROTEIN",
-    "CREATININE",
-    "PLATELETS_COUNT",
-}
 
-# ---------------------------------------------------------------------------
-# Feature-engineering helpers (identical logic to LengthOfStay reference proxy)
-# ---------------------------------------------------------------------------
-
-def _derive_age_group(age) -> str:
+def derive_age_group(age):
+    """Derive AGE_GROUP label from numeric AGE (fallback if AGE_GROUP missing)."""
     try:
         a = int(age)
     except Exception:
@@ -193,25 +167,8 @@ def _derive_age_group(age) -> str:
     return "Senior"
 
 
-def _get_age_group(age) -> Optional[str]:
-    if age is None:
-        return None
-    try:
-        a = int(age)
-    except Exception:
-        return None
-    if a <= 12:
-        return "Child"
-    if 13 <= a <= 39:
-        return "Young_Adult"
-    if 40 <= a <= 49:
-        return "Adult"
-    if 50 <= a <= 64:
-        return "Middle_Aged"
-    return "Senior"
-
-
-def _parse_bool_like(val) -> bool:
+def parse_bool_like(val):
+    """Convert various representations to a boolean."""
     if isinstance(val, bool):
         return val
     if val is None:
@@ -219,10 +176,18 @@ def _parse_bool_like(val) -> bool:
     s = str(val).strip().lower()
     if s in ("yes", "y", "true", "1", "t"):
         return True
-    return False
+    if s in ("no", "n", "false", "0", "f", "na", ""):
+        return False
+    return True
 
 
-def _available_flag(val) -> int:
+def available_flag(val):
+    """
+    Robust presence check:
+    - If numeric and non-zero -> present
+    - If string: try to parse first number; if none, non-empty -> present
+    - Empty / null / '0' / 'na' -> not present
+    """
     if val is None:
         return 0
     if isinstance(val, (int, float)):
@@ -233,15 +198,17 @@ def _available_flag(val) -> int:
     m = re.search(r"-?\d+\.?\d*", s)
     if m:
         try:
-            return 1 if float(m.group()) != 0 else 0
+            num = float(m.group())
+            return 1 if num != 0 else 0
         except Exception:
             return 1
     return 1
 
 
-def _coerce_to_type(value, default):
+def coerce_to_type(value, default):
+    """Attempt to coerce a value to the default type; fallback to default."""
     if isinstance(default, bool):
-        return bool(_parse_bool_like(value))
+        return bool(parse_bool_like(value))
     if isinstance(default, int):
         try:
             return int(value)
@@ -257,90 +224,59 @@ def _coerce_to_type(value, default):
     return value
 
 
-def _strip_units(value):
-    if isinstance(value, str):
-        m = re.search(r"[-+]?\d*\.?\d+", value)
-        if m:
-            try:
-                return float(m.group())
-            except ValueError:
-                return value
-    return value
+FIELDS_STRIP_UNITS = {
+    "SODIUM",
+    "BLOOD_UREA_NITROGEN",
+    "C_REACTIVE_PROTEIN",
+    "CREATININE",
+    "PLATELETS_COUNT",
+}
 
 
-def _clean_primary(value):
-    if isinstance(value, str):
-        return re.sub(r"[,\s]*unspecified\s*$", "", value, flags=re.IGNORECASE)
-    return value
-
-
-def _predict_los_group(
-    age_group_encoded: int,
-    ip_in_previous_30_days_encoded: int,
-    hospitalization_previous_year: int,
-    admission_type_encoded: int,
-    admission_level_encoded: int,
-    room_type_encoded: int,
-) -> str:
-    score = 0
-    if age_group_encoded == 0:
-        score += 1
-    elif age_group_encoded == 2:
-        score += 1
-    elif age_group_encoded == 3:
-        score += 2
-    if ip_in_previous_30_days_encoded == 1:
-        score += 2
-    if hospitalization_previous_year > 1:
-        score += 1
-    long_stay = [1, 3, 4, 11, 12, 16, 17, 20]
-    medium_stay = [2, 5, 6, 7, 8, 10, 13, 18, 21]
-    if admission_level_encoded in long_stay:
-        score += 2
-    elif admission_level_encoded in medium_stay:
-        score += 1
-    if room_type_encoded == 1:
-        score += 2
-    elif room_type_encoded in [2, 3]:
-        score += 1
-    if score <= 3:
-        return "SHORT"
-    if score <= 6:
-        return "MEDIUM"
-    return "LONG"
-
-
-def _encode_los_group(los_group: str) -> int:
-    return {"SHORT": 0, "MEDIUM": 1, "LONG": 2}.get(str(los_group).upper(), 0)
-
-
-def _normalize_raw_payload(incoming: dict):
+def normalize_raw_payload(incoming: dict):
     """
-    Returns (cleaned_raw, cleaned_for_encoding).
-    Identical logic to the LengthOfStay reference proxy.
+    Normalize + type-cast the incoming raw payload to raw fields expected by model.
+    Returns two dicts:
+      - cleaned_raw: types as per schema (EXPIRED and IP_IN_PREVIOUS_30_DAYS as bool)
+      - cleaned_for_encoding: same as cleaned_raw but with EXPIRED and IP_IN_PREVIOUS_30_DAYS as 'Yes'/'No' strings
     """
+
+    def strip_units(value):
+        if isinstance(value, str):
+            match = re.search(r"[-+]?\d*\.?\d+", value)
+            if match:
+                try:
+                    return float(match.group())
+                except ValueError:
+                    return value
+        return value
+
+    def clean_primary(value):
+        if isinstance(value, str):
+            return re.sub(r"[,\s]*unspecified\s*$", "", value, flags=re.IGNORECASE)
+        return value
+
     incoming_lc = {str(k).lower(): k for k in incoming.keys()}
-    cleaned_raw: dict = {}
-
+    cleaned_raw = {}
     for k, default in DEFAULT_INPUT_SCHEMA.items():
         if k.endswith("_encoded") or k.endswith("_available"):
             continue
         incoming_key = incoming_lc.get(k.lower(), k)
         val = incoming.get(incoming_key, default)
         if k in FIELDS_STRIP_UNITS:
-            val = _strip_units(val)
+            val = strip_units(val)
         if k == "PRIMARY":
-            val = _clean_primary(val)
-        coerced = _coerce_to_type(val, default)
+            val = clean_primary(val)
+        coerced = coerce_to_type(val, default)
         if k == "AGE" and isinstance(coerced, float):
             coerced = int(coerced)
         cleaned_raw[k] = coerced
 
     if not cleaned_raw.get("AGE_GROUP"):
-        cleaned_raw["AGE_GROUP"] = _derive_age_group(cleaned_raw.get("AGE", 0))
+        cleaned_raw["AGE_GROUP"] = derive_age_group(cleaned_raw.get("AGE", 0))
 
-    cleaned_raw["EXPIRED"] = _parse_bool_like(cleaned_raw.get("EXPIRED"))
-    cleaned_raw["IP_IN_PREVIOUS_30_DAYS"] = _parse_bool_like(cleaned_raw.get("IP_IN_PREVIOUS_30_DAYS"))
+    cleaned_raw["EXPIRED"] = parse_bool_like(cleaned_raw.get("EXPIRED"))
+    cleaned_raw["IP_IN_PREVIOUS_30_DAYS"] = parse_bool_like(cleaned_raw.get("IP_IN_PREVIOUS_30_DAYS"))
 
     cleaned_for_encoding = dict(cleaned_raw)
     cleaned_for_encoding["EXPIRED"] = "Yes" if cleaned_raw["EXPIRED"] else "No"
@@ -349,88 +285,65 @@ def _normalize_raw_payload(incoming: dict):
     return cleaned_raw, cleaned_for_encoding
 
 
-def _build_final_payload(cleaned_raw: dict, cleaned_for_encoding: dict) -> dict:
-    """
-    Run encoder (if available) then compute availability flags, LOS_GROUP,
-    PRIMARY_encoded ICD mapping — mirrors LengthOfStay reference proxy exactly.
-    """
-    # Encoder step
-    if _encoder is not None and pd is not None:
-        try:
-            df_enc = pd.DataFrame([cleaned_for_encoding])
-            encoded_df = _encoder.transform(df_enc)
-            model_payload = encoded_df.to_dict(orient="records")[0]
-        except Exception as enc_err:
-            logger.warning("Encoder failed (%s), using rule-based fallback", enc_err)
-            model_payload = dict(cleaned_for_encoding)
-    else:
-        model_payload = dict(cleaned_for_encoding)
+def predict_los_group(
+    age_group_encoded,
+    ip_in_previous_30_days_encoded,
+    hospitalization_previous_year,
+    admission_type_encoded,
+    admission_level_encoded,
+    room_type_encoded,
+):
+    score = 0
+    if age_group_encoded in [1, 4]:
+        score += 0
+    elif age_group_encoded == 0:
+        score += 1
+    elif age_group_encoded == 2:
+        score += 1
+    elif age_group_encoded == 3:
+        score += 2
 
-    # Recompute availability flags (overrides encoder)
-    model_payload["SODIUM_available"] = _available_flag(cleaned_raw.get("SODIUM"))
-    model_payload["BLOOD_UREA_NITROGEN_available"] = _available_flag(cleaned_raw.get("BLOOD_UREA_NITROGEN"))
-    model_payload["C_REACTIVE_PROTEIN_available"] = _available_flag(cleaned_raw.get("C_REACTIVE_PROTEIN"))
-    model_payload["CREATININE_available"] = _available_flag(cleaned_raw.get("CREATININE"))
-    model_payload["PLATELETS_COUNT_available"] = _available_flag(cleaned_raw.get("PLATELETS_COUNT"))
+    if ip_in_previous_30_days_encoded == 1:
+        score += 2
+    if hospitalization_previous_year > 1:
+        score += 1
 
-    # Build final payload from schema order
-    final_payload: dict = {}
-    for key, default in DEFAULT_INPUT_SCHEMA.items():
-        if key in cleaned_raw and not (key.endswith("_encoded") or key.endswith("_available")):
-            final_payload[key] = cleaned_raw.get(key, default)
-        elif key in model_payload:
-            final_payload[key] = _coerce_to_type(model_payload.get(key, default), default)
-        else:
-            final_payload[key] = default
+    long_stay_levels = [1, 3, 4, 11, 12, 16, 17, 20]
+    medium_stay_levels = [2, 5, 6, 7, 8, 10, 13, 18, 21]
+    if admission_level_encoded in long_stay_levels:
+        score += 2
+    elif admission_level_encoded in medium_stay_levels:
+        score += 1
 
-    # PRIMARY_encoded: ICD mapping from derived_mapping.json
+    if room_type_encoded == 1:
+        score += 2
+    elif room_type_encoded in [2, 3]:
+        score += 1
+
+    if score <= 3:
+        return "SHORT"
+    if 4 <= score <= 6:
+        return "MEDIUM"
+    return "LONG"
+
+
+def get_age_group(age):
+    if age is None:
+        return None
     try:
-        if os.path.isfile(DERIVED_MAPPING_PATH):
-            with open(DERIVED_MAPPING_PATH, "r", encoding="utf-8") as f:
-                mapping = json.load(f)
-            primary_map = mapping.get("PRIMARY_encoded", {})
-            primary_val = cleaned_raw.get("PRIMARY", "")
-            final_payload["PRIMARY_encoded"] = primary_map.get(primary_val, final_payload["PRIMARY_encoded"])
-            if final_payload["PRIMARY_encoded"] in (0, -1) and primary_val:
-                icd_match = re.search(r"\b([A-Z]\d{2}(?:\.\d{1,2})?)\b", primary_val, re.IGNORECASE)
-                if icd_match:
-                    icd_code = icd_match.group(1).upper()
-                    found = False
-                    for k, v in primary_map.items():
-                        if isinstance(k, str):
-                            codes = [c.strip().upper() for c in k.split(",")]
-                            if icd_code in codes:
-                                final_payload["PRIMARY_encoded"] = v
-                                found = True
-                                break
-                    if not found:
-                        icd_prefix = icd_code[:4] if "." in icd_code else icd_code[:3]
-                        for k, v in primary_map.items():
-                            if isinstance(k, str):
-                                codes = [c.strip().upper() for c in k.split(",")]
-                                if any(c.startswith(icd_prefix) for c in codes):
-                                    final_payload["PRIMARY_encoded"] = v
-                                    break
-    except Exception as e:
-        logger.warning("Could not update PRIMARY_encoded from mapping.json: %s", e)
+        age = int(age)
+    except Exception:
+        return None
+    if age <= 12:
+        return "Child"
+    if 13 <= age <= 39:
+        return "Young_Adult"
+    if 40 <= age <= 49:
+        return "Adult"
+    if 50 <= age <= 64:
+        return "Middle_Aged"
+    return "Senior"
 
-    # LOS_GROUP rule-based prediction
-    final_payload["LOS_GROUP"] = _predict_los_group(
-        age_group_encoded=final_payload.get("AGE_GROUP_encoded", 0),
-        ip_in_previous_30_days_encoded=final_payload.get("IP_IN_PREVIOUS_30_DAYS_encoded", 0),
-        hospitalization_previous_year=final_payload.get("HOSPITALIZATION_PREVIOUS_YEAR", 0),
-        admission_type_encoded=final_payload.get("ADMISSION_TYPE_encoded", 0),
-        admission_level_encoded=final_payload.get("ADMISSION_LEVEL_encoded", 0),
-        room_type_encoded=final_payload.get("ROOM_TYPE_encoded", 0),
-    )
-    final_payload["LOS_GROUP_encoded"] = _encode_los_group(final_payload["LOS_GROUP"])
-
-    return final_payload
-
-
-# ---------------------------------------------------------------------------
-# OpenSearch — same field map + index schema as original LengthOfStay proxy
-# ---------------------------------------------------------------------------
 
 INPUT_TO_OS_FIELD_MAP = {
     "mrno": "MRNO",
@@ -475,49 +388,30 @@ INPUT_TO_OS_FIELD_MAP = {
 }
 
 
-def _raw_get(raw: dict, *keys):
-    """Read from raw request using exact or case-insensitive key."""
-    if not isinstance(raw, dict):
-        return None
-    lc = {str(k).lower(): k for k in raw.keys()}
-    for key in keys:
-        if key in raw:
-            return raw[key]
-        found = lc.get(str(key).lower())
-        if found is not None:
-            return raw[found]
-    return None
-
-
-def save_to_opensearch(raw_input: dict, prediction) -> None:
-    """Save raw API input + LOS prediction to length-of-stay-index (original schema)."""
+def save_to_opensearch(input_data: dict, prediction: float):
+    """Save raw API input data + LOS prediction to OpenSearch."""
     try:
-        os_data = {}
-        for api_key, os_field in INPUT_TO_OS_FIELD_MAP.items():
-            os_data[os_field] = _raw_get(raw_input, api_key, os_field)
+        os_data = {
+            os_field: input_data.get(api_key, None)
+            for api_key, os_field in INPUT_TO_OS_FIELD_MAP.items()
+        }
+        os_data["LOS_Prediction"] = float(prediction)
+        os_data["timestamp"] = datetime.utcnow().isoformat()
 
-        os_data["LOS_Prediction"] = float(prediction) if prediction is not None else None
-        os_data["timestamp"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        url = f"{OPENSEARCH_URL.rstrip('/')}/{INDEX_NAME}/_doc/"
-        resp = session.post(
+        url = f"{OPENSEARCH_URL}{INDEX_NAME}/_doc/"
+        response = session.post(
             url,
             json=os_data,
             headers=HEADERS,
             auth=HTTPBasicAuth(USERNAME, PASSWORD),
             verify=False,
-            timeout=OPENSEARCH_TIMEOUT,
         )
-        if not (200 <= resp.status_code < 300):
-            raise RuntimeError(f"Failed to index data: {resp.status_code} {resp.text}")
-        logger.info("Indexed LOS record in OpenSearch index %s", INDEX_NAME)
+        if response.status_code not in (200, 201):
+            raise Exception(f"Failed to index data: {response.status_code} {response.text}")
+        logging.info("Data successfully indexed in OpenSearch.")
     except Exception as e:
-        logger.error("Error saving data to OpenSearch: %s", e)
+        logging.error("Error saving data to OpenSearch: %s", e)
 
-
-# ---------------------------------------------------------------------------
-# Local gateway (async, fire-and-forget)
-# ---------------------------------------------------------------------------
 
 def _local_los_days(gateway_body: dict) -> Optional[float]:
     raw = gateway_body.get("prediction")
@@ -546,7 +440,7 @@ def invoke_local_gateway_async(final_payload: dict) -> None:
             )
             if response.status_code != 200:
                 body = response.json() if response.content else {}
-                logger.warning(
+                logging.warning(
                     "Local LOS gateway HTTP %s: %s",
                     response.status_code,
                     body.get("detail", response.text),
@@ -555,18 +449,12 @@ def invoke_local_gateway_async(final_payload: dict) -> None:
             body = response.json() if response.content else {}
             days = _local_los_days(body)
             if days is not None:
-                logger.info("Local LOS gateway prediction: %.4f days", days)
-            else:
-                logger.info("Local LOS gateway prediction: %s", body.get("prediction"))
+                logging.info("Local LOS gateway prediction: %.4f days", days)
         except requests.RequestException as e:
-            logger.error("Local LOS gateway error: %s", e)
+            logging.error("Local LOS gateway error: %s", e)
 
     threading.Thread(target=_run, name="local-los-dup", daemon=True).start()
 
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
 
 @app.route("/health", methods=["GET"])
 def health():
@@ -578,87 +466,164 @@ def get_length_of_stay():
     try:
         data = request.get_json()
         if not data:
-            logger.warning("Empty/invalid JSON payload")
+            logging.warning("Empty/invalid json payload")
             return jsonify({"error": "Invalid or missing JSON payload"}), 400
 
-        logger.info("Raw LOS request: %s", json.dumps(data, default=str))
+        logging.info("📥 Raw request received: %s", json.dumps(data, indent=2, default=str))
 
-        # Add AGE_GROUP if missing
-        if "AGE_GROUP" not in data:
-            age_key = next((k for k in data if k.lower() == "age"), None)
-            data["AGE_GROUP"] = _get_age_group(data[age_key]) if age_key else ""
+        if "age" in data:
+            data["AGE_GROUP"] = get_age_group(data["age"])
+        else:
+            data["AGE_GROUP"] = ""
 
-        # Feature engineering
-        cleaned_raw, cleaned_for_encoding = _normalize_raw_payload(data)
-        final_payload = _build_final_payload(cleaned_raw, cleaned_for_encoding)
+        logging.info("Updated request:\n%s", json.dumps(data, indent=2, default=str))
 
-        logger.info("Final LOS payload: %s", json.dumps(final_payload, default=str))
+        cleaned_raw, cleaned_for_encoding = normalize_raw_payload(data)
+        logging.info("Cleaned raw payload: %s", json.dumps(cleaned_raw, indent=2, default=str))
 
-        # Fire local gateway in background
+        df_enc = pd.DataFrame([cleaned_for_encoding])
+        encoded_df = encoder.transform(df_enc)
+        model_payload = encoded_df.to_dict(orient="records")[0]
+        logging.info("Encoded payload (from encoder): %s", json.dumps(model_payload, indent=2, default=str))
+
+        model_payload["SODIUM_available"] = available_flag(cleaned_raw.get("SODIUM"))
+        model_payload["BLOOD_UREA_NITROGEN_available"] = available_flag(cleaned_raw.get("BLOOD_UREA_NITROGEN"))
+        model_payload["C_REACTIVE_PROTEIN_available"] = available_flag(cleaned_raw.get("C_REACTIVE_PROTEIN"))
+        model_payload["CREATININE_available"] = available_flag(cleaned_raw.get("CREATININE"))
+        model_payload["PLATELETS_COUNT_available"] = available_flag(cleaned_raw.get("PLATELETS_COUNT"))
+
+        final_payload = {}
+        for key, default in DEFAULT_INPUT_SCHEMA.items():
+            if key in cleaned_raw and not (key.endswith("_encoded") or key.endswith("_available")):
+                final_payload[key] = cleaned_raw.get(key, default)
+            elif key in model_payload:
+                val = model_payload.get(key, default)
+                final_payload[key] = coerce_to_type(val, default)
+            else:
+                final_payload[key] = default
+
+        try:
+            with open(DERIVED_MAPPING_PATH, "r", encoding="utf-8") as f:
+                mapping = json.load(f)
+            primary_map = mapping.get("PRIMARY_encoded", {})
+            primary_val = cleaned_raw.get("PRIMARY", "")
+            final_payload["PRIMARY_encoded"] = primary_map.get(primary_val, final_payload["PRIMARY_encoded"])
+            if final_payload["PRIMARY_encoded"] in (0, -1) and primary_val:
+                icd_match = re.search(r"\b([A-Z]\d{2}(?:\.\d{1,2})?)\b", primary_val, re.IGNORECASE)
+                if icd_match:
+                    icd_code = icd_match.group(1).upper()
+                    found = False
+                    for k, v in primary_map.items():
+                        if isinstance(k, str):
+                            codes = [code.strip().upper() for code in k.split(",")]
+                            if icd_code in codes:
+                                final_payload["PRIMARY_encoded"] = v
+                                logging.info(
+                                    "Mapped PRIMARY_encoded using ICD code '%s' found in mapping key '%s' from PRIMARY: %s",
+                                    icd_code, k, primary_val,
+                                )
+                                found = True
+                                break
+                    if not found:
+                        icd_prefix = icd_code[:4] if "." in icd_code else icd_code[:3]
+                        for k, v in primary_map.items():
+                            if isinstance(k, str):
+                                codes = [code.strip().upper() for code in k.split(",")]
+                                if any(code.startswith(icd_prefix) for code in codes):
+                                    final_payload["PRIMARY_encoded"] = v
+                                    logging.info(
+                                        "Mapped PRIMARY_encoded using ICD prefix '%s' from PRIMARY: %s",
+                                        icd_prefix, primary_val,
+                                    )
+                                    found = True
+                                    break
+                        if not found:
+                            logging.warning(
+                                "Could not map PRIMARY_encoded using ICD code '%s' from PRIMARY: %s",
+                                icd_code, primary_val,
+                            )
+                else:
+                    logging.warning("Could not extract ICD code from PRIMARY: %s", primary_val)
+            else:
+                logging.info("PRIMARY_encoded found directly for PRIMARY: %s", primary_val)
+        except Exception as e:
+            logging.warning("Could not update PRIMARY_encoded from mapping.json: %s", e)
+
+        final_payload["LOS_GROUP"] = predict_los_group(
+            age_group_encoded=final_payload.get("AGE_GROUP_encoded", 0),
+            ip_in_previous_30_days_encoded=final_payload.get("IP_IN_PREVIOUS_30_DAYS_encoded", 0),
+            hospitalization_previous_year=final_payload.get("HOSPITALIZATION_PREVIOUS_YEAR", 0),
+            admission_type_encoded=final_payload.get("ADMISSION_TYPE_encoded", 0),
+            admission_level_encoded=final_payload.get("ADMISSION_LEVEL_encoded", 0),
+            room_type_encoded=final_payload.get("ROOM_TYPE_encoded", 0),
+        )
+
+        def encode_los_group(los_group):
+            mapping = {"SHORT": 0, "MEDIUM": 1, "LONG": 2}
+            return mapping.get(str(los_group).upper(), 0)
+
+        final_payload["LOS_GROUP_encoded"] = encode_los_group(final_payload.get("LOS_GROUP", "SHORT"))
+
+        logging.info("🚀 Final payload (sent to Lambda): %s", json.dumps(final_payload, indent=2, default=str))
+
         if LOCAL_GATEWAY_ENABLED:
             invoke_local_gateway_async(final_payload)
 
-        # Cloud call — flat final_payload (same as original LengthOfStay proxy)
-        logger.info("Calling cloud LOS API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
-        resp = requests.post(
-            API_GATEWAY_URL,
-            json=final_payload,
-            headers={"Content-Type": "application/json"},
-            timeout=CLOUD_REQUEST_TIMEOUT,
-        )
-        resp.raise_for_status()
-        logger.info("Cloud LOS response %s: %s", resp.status_code, resp.text)
+        headers = {"Content-Type": "application/json"}
+        resp = requests.post(API_GATEWAY_URL, json=final_payload, headers=headers, timeout=15)
+        logging.info("Lambda response: %s %s", resp.status_code, resp.text)
 
-        try:
-            outer = resp.json()
-        except Exception:
-            return jsonify({"error": "Invalid JSON from cloud API", "raw": resp.text}), 502
-
-        # Parse prediction from outer or nested body
-        predicted_los = None
-        if "body" in outer:
+        if resp.status_code == 200:
             try:
-                inner = json.loads(outer["body"]) if isinstance(outer["body"], str) else outer["body"]
+                outer = resp.json()
             except Exception:
-                inner = {}
-            predicted_los = (
-                inner.get("Predicted_length_of_stay")
-                or inner.get("predicted_los")
-                or inner.get("predicted_length_of_stay")
-            )
-        if predicted_los is None:
-            predicted_los = (
-                outer.get("Predicted_length_of_stay")
-                or outer.get("predicted_los")
-                or outer.get("predicted_length_of_stay")
-            )
+                return jsonify({"error": "Invalid JSON response from Lambda", "raw_response": resp.text}), 502
 
-        if predicted_los is None:
-            logger.error("Predicted_length_of_stay not found in response: %s", json.dumps(outer, default=str))
-            return jsonify({"error": "Predicted_length_of_stay not found in cloud response"}), 500
+            if "body" in outer:
+                try:
+                    inner = json.loads(outer["body"])
+                except Exception:
+                    logging.error("Failed to parse 'body' as JSON: %s", outer.get("body"))
+                    return jsonify({"error": "Failed to parse 'body' from API Gateway response"}), 500
 
-        save_to_opensearch(data, predicted_los)
+                predicted_los = (
+                    inner.get("Predicted_length_of_stay")
+                    or inner.get("predicted_los")
+                    or inner.get("predicted_length_of_stay")
+                )
 
-        return app.response_class(
-            response=json.dumps({"Length of Stay": round(float(predicted_los), 2)}, indent=4),
-            status=200,
-            mimetype="application/json",
-        )
+                save_to_opensearch(data, predicted_los)
+
+                if predicted_los is not None:
+                    return jsonify({"Length of Stay": round(float(predicted_los), 2)}), 200
+                logging.error(
+                    "Predicted_length_of_stay not found in inner body: %s",
+                    json.dumps(inner, default=str),
+                )
+                return jsonify({"error": "Predicted_length_of_stay not found in body"}), 500
+
+            if "Predicted_length_of_stay" in outer:
+                return jsonify({"Length of Stay": round(float(outer["Predicted_length_of_stay"]), 2)}), 200
+            logging.error("Missing 'body' in API Gateway response: %s", json.dumps(outer, default=str))
+            return jsonify({"error": "Missing 'body' in API Gateway response"}), 500
+
+        logging.error("Bad status from Lambda: %s - %s", resp.status_code, resp.text)
+        return jsonify({
+            "error": "Failed to get response from API Gateway",
+            "status_code": resp.status_code,
+            "response": resp.text,
+        }), 502
 
     except requests.exceptions.Timeout:
-        logger.exception("Cloud LOS API timed out")
-        return jsonify({"error": "Request to cloud API timed out"}), 504
+        logging.exception("Request to API Gateway timed out")
+        return jsonify({"error": "Request to API Gateway timed out"}), 504
     except requests.exceptions.RequestException as e:
-        logger.exception("Request exception")
+        logging.exception("Request exception")
         return jsonify({"error": f"Request exception: {str(e)}"}), 500
     except Exception as e:
-        logger.exception("Internal server error")
+        logging.exception("Internal server error")
         return jsonify({"error": f"Internal server error: {str(e)}"}), 500
 
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
@@ -670,24 +635,10 @@ if __name__ == "__main__":
     use_ssl = os.getenv("FLASK_USE_SSL", "true").lower() in ("1", "true", "yes")
 
     ssl_context = None
-    if use_ssl:
-        if os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
-            ssl_context = (ssl_cert, ssl_key)
-            logger.info("HTTPS  https://%s:%s/predict/lengthOfStay", host, port)
-        else:
-            logger.error(
-                "SSL cert/key not found (%s, %s) — falling back to HTTP",
-                ssl_cert, ssl_key,
-            )
-            logger.info("HTTP   http://%s:%s/predict/lengthOfStay", host, port)
+    if use_ssl and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
+        ssl_context = (ssl_cert, ssl_key)
+        logging.info("HTTPS  https://%s:%s/predict/lengthOfStay", host, port)
     else:
-        logger.info("HTTP   http://%s:%s/predict/lengthOfStay", host, port)
+        logging.info("HTTP   http://%s:%s/predict/lengthOfStay", host, port)
 
-    app.run(
-        host=host,
-        port=port,
-        debug=debug,
-        ssl_context=ssl_context,
-        use_reloader=False,
-        threaded=True,
-    )
+    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context, use_reloader=False, threaded=True)
