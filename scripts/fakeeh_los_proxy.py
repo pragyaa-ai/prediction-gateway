@@ -559,12 +559,11 @@ def get_length_of_stay():
         if LOCAL_GATEWAY_ENABLED:
             invoke_local_gateway_async(final_payload)
 
-        # Cloud call — payload wrapped in Azure ML format
-        cloud_payload = {"Inputs": {"data": [final_payload]}, "GlobalParameters": 0}
+        # Cloud call — flat final_payload (same as original LengthOfStay proxy)
         logger.info("Calling cloud LOS API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
         resp = requests.post(
             API_GATEWAY_URL,
-            json=cloud_payload,
+            json=final_payload,
             headers={"Content-Type": "application/json"},
             timeout=CLOUD_REQUEST_TIMEOUT,
         )
