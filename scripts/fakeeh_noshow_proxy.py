@@ -118,17 +118,20 @@ INCOMING_FIELD_NAMES = [
 ]
 
 
+def values_to_csv_row(values: list) -> str:
+    """RFC4180 CSV row for SageMaker tabular_serve (handles quotes, Arabic, commas)."""
+    output = io.StringIO()
+    csv.writer(output, quoting=csv.QUOTE_ALL, lineterminator="\n").writerow(values)
+    return output.getvalue()
+
+
 def json_to_csv_string(json_request):
     if isinstance(json_request, str):
         json_request = json.loads(json_request)
 
     values = json_request["data"]["features"]["values"]
 
-    output = io.StringIO()
-    csv_writer = csv.writer(output, quoting=csv.QUOTE_ALL)
-    csv_writer.writerow(values[0])
-
-    return output.getvalue().strip()
+    return values_to_csv_row(values[0]).strip()
 
 
 def save_to_opensearch(input_data, prediction):
@@ -202,10 +205,11 @@ def save_to_opensearch(input_data, prediction):
         print(f"Error saving data to OpenSearch: {e}")
 
 
-def invoke_api_gateway(csv_data):
-    headers = {"Content-Type": "text/csv"}
+def invoke_api_gateway(csv_data: str):
+    headers = {"Content-Type": "text/csv; charset=utf-8"}
     try:
-        response = requests.post(API_GATEWAY_URL, data=csv_data, headers=headers)
+        body = csv_data.encode("utf-8") if isinstance(csv_data, str) else csv_data
+        response = requests.post(API_GATEWAY_URL, data=body, headers=headers)
         response.raise_for_status()
         return response.text
     except requests.exceptions.RequestException as e:
@@ -265,7 +269,7 @@ def build_cloud_inputs(incoming_json: dict) -> tuple[dict, list, str]:
 
     ordered_values = [incoming_dict.get(field, "") for field in REQUIRED_FIELDS]
     cloud_inputs = dict(zip(REQUIRED_FIELDS, ordered_values))
-    input_csv = ",".join(f'"{value}"' for value in ordered_values) + "\n"
+    input_csv = values_to_csv_row(ordered_values)
     return cloud_inputs, ordered_values, input_csv
 
 
