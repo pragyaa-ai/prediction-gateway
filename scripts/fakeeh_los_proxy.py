@@ -35,11 +35,12 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from adapters.sagemaker_format import parse_regression_prediction  # noqa: E402
 from los_encoder import LOSDataEncoder  # noqa: E402 — must live in scripts/
+from proxy_env import env_bool, env_get  # noqa: E402
 
 app = Flask(__name__)
 
 # API Gateway / Lambda endpoint
-API_GATEWAY_URL = os.getenv("LOS_CLOUD_URL", "https://apis.pragyaa.ai/stay/predict")
+API_GATEWAY_URL = env_get("LOS_CLOUD_URL", "API_GATEWAY_URL", default="https://apis.pragyaa.ai/stay/predict")
 
 # OpenSearch Configuration (default 10.1.186.40 — override via OPENSEARCH_URL)
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
@@ -49,13 +50,13 @@ USERNAME = os.getenv("OPENSEARCH_USER", "admin")
 PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "admin")
 
 # Local ml-gateway (async, does not affect client response)
-LOCAL_GATEWAY_URL = os.getenv(
-    "LOS_LOCAL_GATEWAY_URL",
-    "http://127.0.0.1:8000/v1/predict/los_fakeeh_ksa_local",
+LOCAL_GATEWAY_URL = env_get(
+    "LOS_LOCAL_GATEWAY_URL", "LOCAL_GATEWAY_URL",
+    default="http://127.0.0.1:8000/v1/predict/los_fakeeh_ksa_local",
 )
-LOCAL_GATEWAY_ENABLED = os.getenv("LOCAL_GATEWAY_ENABLED", "true").lower() in (
-    "1", "true", "yes",
-)
+USE_LOCAL_AS_PRIMARY = env_bool("LOS_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
+CLOUD_ENABLED = env_bool("LOS_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
+LOCAL_GATEWAY_ENABLED = env_bool("LOS_LOCAL_GATEWAY_ENABLED", "LOCAL_GATEWAY_ENABLED", default="true")
 
 # Setup retry strategy for OpenSearch requests
 retry_strategy = Retry(
@@ -428,32 +429,78 @@ def _local_los_days(gateway_body: dict) -> Optional[float]:
     return None
 
 
+def invoke_local_gateway(final_payload: dict) -> float:
+    response = requests.post(
+        LOCAL_GATEWAY_URL,
+        json={"client_id": "fakeeh-flask-los-proxy", "inputs": final_payload},
+        headers={"Content-Type": "application/json"},
+        timeout=120,
+    )
+    if response.status_code != 200:
+        body = response.json() if response.content else {}
+        raise RuntimeError(
+            f"Local LOS gateway HTTP {response.status_code}: "
+            f"{body.get('detail', response.text)}"
+        )
+    days = _local_los_days(response.json() if response.content else {})
+    if days is None:
+        raise RuntimeError("Local LOS gateway returned no parseable prediction")
+    logging.info("Local LOS gateway prediction: %.4f days", days)
+    return days
+
+
 def invoke_local_gateway_async(final_payload: dict) -> None:
     def _run() -> None:
-        payload = {"client_id": "fakeeh-flask-los-proxy", "inputs": final_payload}
         try:
-            response = requests.post(
-                LOCAL_GATEWAY_URL,
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=120,
-            )
-            if response.status_code != 200:
-                body = response.json() if response.content else {}
-                logging.warning(
-                    "Local LOS gateway HTTP %s: %s",
-                    response.status_code,
-                    body.get("detail", response.text),
-                )
-                return
-            body = response.json() if response.content else {}
-            days = _local_los_days(body)
-            if days is not None:
-                logging.info("Local LOS gateway prediction: %.4f days", days)
-        except requests.RequestException as e:
+            invoke_local_gateway(final_payload)
+        except Exception as e:
             logging.error("Local LOS gateway error: %s", e)
 
     threading.Thread(target=_run, name="local-los-dup", daemon=True).start()
+
+
+def invoke_cloud_gateway(final_payload: dict) -> Optional[float]:
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(API_GATEWAY_URL, json=final_payload, headers=headers, timeout=15)
+    logging.info("Lambda response: %s %s", resp.status_code, resp.text)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Cloud LOS HTTP {resp.status_code}: {resp.text}")
+    outer = resp.json()
+    if "body" in outer:
+        inner = json.loads(outer["body"]) if isinstance(outer["body"], str) else outer["body"]
+        return (
+            inner.get("Predicted_length_of_stay")
+            or inner.get("predicted_los")
+            or inner.get("predicted_length_of_stay")
+        )
+    return outer.get("Predicted_length_of_stay")
+
+
+def format_los_client_response(predicted_los) -> tuple:
+    """Same JSON shape whether prediction came from cloud or local."""
+    return jsonify({"Length of Stay": round(float(predicted_los), 2)}), 200
+
+
+def resolve_los_prediction(final_payload: dict) -> float:
+    predicted_los = None
+    if USE_LOCAL_AS_PRIMARY:
+        if LOCAL_GATEWAY_ENABLED:
+            try:
+                predicted_los = invoke_local_gateway(final_payload)
+            except Exception as e:
+                logging.warning("Local LOS primary failed: %s", e)
+        if predicted_los is None and CLOUD_ENABLED:
+            predicted_los = invoke_cloud_gateway(final_payload)
+    else:
+        if CLOUD_ENABLED:
+            predicted_los = invoke_cloud_gateway(final_payload)
+        if LOCAL_GATEWAY_ENABLED:
+            invoke_local_gateway_async(final_payload)
+        if predicted_los is None and LOCAL_GATEWAY_ENABLED:
+            predicted_los = invoke_local_gateway(final_payload)
+    if predicted_los is None:
+        raise RuntimeError("No LOS prediction from local or cloud")
+    return float(predicted_los)
 
 
 @app.route("/health", methods=["GET"])
@@ -566,53 +613,9 @@ def get_length_of_stay():
 
         logging.info("🚀 Final payload (sent to Lambda): %s", json.dumps(final_payload, indent=2, default=str))
 
-        if LOCAL_GATEWAY_ENABLED:
-            invoke_local_gateway_async(final_payload)
-
-        headers = {"Content-Type": "application/json"}
-        resp = requests.post(API_GATEWAY_URL, json=final_payload, headers=headers, timeout=15)
-        logging.info("Lambda response: %s %s", resp.status_code, resp.text)
-
-        if resp.status_code == 200:
-            try:
-                outer = resp.json()
-            except Exception:
-                return jsonify({"error": "Invalid JSON response from Lambda", "raw_response": resp.text}), 502
-
-            if "body" in outer:
-                try:
-                    inner = json.loads(outer["body"])
-                except Exception:
-                    logging.error("Failed to parse 'body' as JSON: %s", outer.get("body"))
-                    return jsonify({"error": "Failed to parse 'body' from API Gateway response"}), 500
-
-                predicted_los = (
-                    inner.get("Predicted_length_of_stay")
-                    or inner.get("predicted_los")
-                    or inner.get("predicted_length_of_stay")
-                )
-
-                save_to_opensearch(data, predicted_los)
-
-                if predicted_los is not None:
-                    return jsonify({"Length of Stay": round(float(predicted_los), 2)}), 200
-                logging.error(
-                    "Predicted_length_of_stay not found in inner body: %s",
-                    json.dumps(inner, default=str),
-                )
-                return jsonify({"error": "Predicted_length_of_stay not found in body"}), 500
-
-            if "Predicted_length_of_stay" in outer:
-                return jsonify({"Length of Stay": round(float(outer["Predicted_length_of_stay"]), 2)}), 200
-            logging.error("Missing 'body' in API Gateway response: %s", json.dumps(outer, default=str))
-            return jsonify({"error": "Missing 'body' in API Gateway response"}), 500
-
-        logging.error("Bad status from Lambda: %s - %s", resp.status_code, resp.text)
-        return jsonify({
-            "error": "Failed to get response from API Gateway",
-            "status_code": resp.status_code,
-            "response": resp.text,
-        }), 502
+        predicted_los = resolve_los_prediction(final_payload)
+        save_to_opensearch(data, predicted_los)
+        return format_los_client_response(predicted_los)
 
     except requests.exceptions.Timeout:
         logging.exception("Request to API Gateway timed out")
@@ -626,13 +629,13 @@ def get_length_of_stay():
 
 
 if __name__ == "__main__":
-    host = os.getenv("FLASK_HOST", "0.0.0.0")
-    port = int(os.getenv("FLASK_PORT", "5015"))
-    debug = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
+    host = env_get("LOS_FLASK_HOST", "FLASK_HOST", default="0.0.0.0")
+    port = int(env_get("LOS_FLASK_PORT", "FLASK_PORT", default="5015"))
+    debug = env_bool("LOS_FLASK_DEBUG", "FLASK_DEBUG", default="false")
 
-    ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
-    ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
-    use_ssl = os.getenv("FLASK_USE_SSL", "true").lower() in ("1", "true", "yes")
+    ssl_cert = env_get("LOS_SSL_CERT", "SSL_CERT", default="/home/sysadmin/fakeeh.care/fullchain.pem")
+    ssl_key = env_get("LOS_SSL_KEY", "SSL_KEY", default="/home/sysadmin/fakeeh.care/PK.key")
+    use_ssl = env_bool("LOS_FLASK_USE_SSL", "FLASK_USE_SSL", default="true")
 
     ssl_context = None
     if use_ssl and os.path.isfile(ssl_cert) and os.path.isfile(ssl_key):
