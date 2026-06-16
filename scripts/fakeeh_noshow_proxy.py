@@ -38,6 +38,8 @@ from requests.adapters import HTTPAdapter
 from requests.auth import HTTPBasicAuth
 from urllib3.util.retry import Retry
 
+from scripts.proxy_env import env_bool, env_get
+
 app = Flask(__name__)
 
 logging.basicConfig(
@@ -54,18 +56,22 @@ OPENSEARCH_TIMEOUT = int(os.getenv("OPENSEARCH_TIMEOUT", "15"))
 API_GATEWAY_URL = os.getenv(
     "API_GATEWAY_URL", "https://apis.pragyaa.ai/predict/predict-show-no-show"
 )
-LOCAL_GATEWAY_URL = os.getenv(
+API_GATEWAY_URL = env_get(
+    "NOSHOW_CLOUD_URL",
+    "API_GATEWAY_URL",
+    default="https://apis.pragyaa.ai/predict/predict-show-no-show",
+)
+LOCAL_GATEWAY_URL = env_get(
+    "NOSHOW_LOCAL_GATEWAY_URL",
     "LOCAL_GATEWAY_URL",
-    "http://127.0.0.1:8000/v1/predict/no_show_fakeeh_ksa_local",
+    default="http://127.0.0.1:8000/v1/predict/no_show_fakeeh_ksa_local",
 )
-LOCAL_GATEWAY_ENABLED = os.getenv("LOCAL_GATEWAY_ENABLED", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+LOCAL_GATEWAY_ENABLED = env_bool("NOSHOW_LOCAL_GATEWAY_ENABLED", "LOCAL_GATEWAY_ENABLED", default="true")
+USE_LOCAL_PRIMARY = env_bool("NOSHOW_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
+CLOUD_ENABLED = env_bool("NOSHOW_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
 
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
-INDEX_NAME = os.getenv("OPENSEARCH_INDEX", "fakeeh-prediction-no-show-index2")
+INDEX_NAME = env_get("NOSHOW_OPENSEARCH_INDEX", "OPENSEARCH_INDEX", default="fakeeh-prediction-no-show-index2")
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 USERNAME = os.getenv("OPENSEARCH_USER", "admin")
 PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "admin")
@@ -273,6 +279,21 @@ def invoke_local_gateway_async(cloud_inputs: dict) -> None:
     thread.start()
 
 
+def invoke_local_gateway_sync(cloud_inputs: dict) -> str:
+    """Local gateway inference (blocking). Returns SageMaker-style CSV string."""
+    payload = {"client_id": "fakeeh-flask-proxy", "inputs": cloud_inputs}
+    response = requests.post(
+        LOCAL_GATEWAY_URL,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=120,
+    )
+    response.raise_for_status()
+    body = response.json() if response.content else {}
+    pred = body.get("prediction")
+    return pred if isinstance(pred, str) else ("" if pred is None else str(pred))
+
+
 def to_epoch(date_val):
     try:
         return int(pd.to_datetime(date_val).timestamp() * 1000)
@@ -335,18 +356,30 @@ def predict():
         cloud_inputs, _ordered_values, input_csv = build_cloud_inputs(incoming_json)
         data = json_to_csv_string(input_data)
 
-        # Fire local duplicate in background (same row as cloud; does not block response)
-        if LOCAL_GATEWAY_ENABLED:
-            invoke_local_gateway_async(cloud_inputs)
+        prediction = None
 
-        # Cloud inference — primary path; response is cloud-only
-        prediction = invoke_api_gateway(input_csv)
-        logger.info("Received prediction from API Gateway: %s", prediction)
-        if not prediction:
-            return jsonify({"error": "No prediction received from API Gateway (timeout or upstream error)"}), 504
+        if USE_LOCAL_PRIMARY:
+            logger.info("Calling local gateway (primary): %s", LOCAL_GATEWAY_URL)
+            try:
+                prediction = invoke_local_gateway_sync(cloud_inputs)
+                logger.info("Received prediction from local gateway: %s", prediction)
+            except Exception:
+                logger.exception("Local gateway (primary) failed")
+                prediction = None
+
+        if prediction is None and CLOUD_ENABLED:
+            # In cloud-primary mode, optionally fire local in background for comparison
+            if (not USE_LOCAL_PRIMARY) and LOCAL_GATEWAY_ENABLED:
+                invoke_local_gateway_async(cloud_inputs)
+
+            prediction = invoke_api_gateway(input_csv)
+            logger.info("Received prediction from API Gateway: %s", prediction)
+            if not prediction:
+                return jsonify({"error": "No prediction received from API Gateway (timeout or upstream error)"}), 504
 
         save_to_opensearch(data, prediction)
 
+        # EXACT same output formatting regardless of source
         return jsonify({"prediction": prediction.rstrip("\n") + "\n"}), 200
 
     except Exception as e:
@@ -356,12 +389,12 @@ def predict():
 
 if __name__ == "__main__":
     host = os.getenv("FLASK_HOST", "0.0.0.0")
-    port = int(os.getenv("FLASK_PORT", "5010"))
+    port = int(env_get("NOSHOW_FLASK_PORT", "FLASK_PORT", default="5010"))
     debug = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
 
     ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
     ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
-    use_ssl = os.getenv("FLASK_USE_SSL", "true").lower() in ("1", "true", "yes")
+    use_ssl = env_bool("NOSHOW_FLASK_USE_SSL", "FLASK_USE_SSL", default="true")
 
     ssl_context = None
     if use_ssl:

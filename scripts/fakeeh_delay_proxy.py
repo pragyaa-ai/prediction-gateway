@@ -27,15 +27,12 @@ from requests.auth import HTTPBasicAuth
 from urllib3.util.retry import Retry
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT_DIR = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-if str(SCRIPT_DIR) not in sys.path:
-    sys.path.insert(0, str(SCRIPT_DIR))
 
 from adapters.delay_features import prepare_fakeeh_delay_cloud_payload  # noqa: E402
 from adapters.sagemaker_format import parse_regression_prediction  # noqa: E402
-from proxy_env import env_bool, env_get  # noqa: E402
+from scripts.proxy_env import env_bool, env_get  # noqa: E402
 
 app = Flask(__name__)
 logging.basicConfig(
@@ -50,19 +47,21 @@ CLOUD_REQUEST_TIMEOUT = int(os.getenv("CLOUD_REQUEST_TIMEOUT", "30"))
 OPENSEARCH_TIMEOUT = int(os.getenv("OPENSEARCH_TIMEOUT", "15"))
 
 API_GATEWAY_URL = env_get(
-    "DELAY_CLOUD_URL", "API_GATEWAY_URL",
+    "DELAY_CLOUD_URL",
+    "API_GATEWAY_URL",
     default="https://apis.pragyaa.ai/arrive/get-delayed-time",
 )
 LOCAL_GATEWAY_URL = env_get(
-    "DELAY_LOCAL_GATEWAY_URL", "LOCAL_GATEWAY_URL",
+    "DELAY_LOCAL_GATEWAY_URL",
+    "LOCAL_GATEWAY_URL",
     default="http://127.0.0.1:8000/v1/predict/delay_fakeeh_ksa_local",
 )
-USE_LOCAL_AS_PRIMARY = env_bool("DELAY_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
-CLOUD_ENABLED = env_bool("DELAY_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
 LOCAL_GATEWAY_ENABLED = env_bool("DELAY_LOCAL_GATEWAY_ENABLED", "LOCAL_GATEWAY_ENABLED", default="true")
+USE_LOCAL_PRIMARY = env_bool("DELAY_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
+CLOUD_ENABLED = env_bool("DELAY_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
 
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
-INDEX_NAME = os.getenv("OPENSEARCH_INDEX", "delayed-arrival-index")
+INDEX_NAME = env_get("DELAY_OPENSEARCH_INDEX", "OPENSEARCH_INDEX", default="delayed-arrival-index")
 HEADERS = {"Content-Type": "application/json", "Accept": "application/json"}
 USERNAME = os.getenv("OPENSEARCH_USER", "admin")
 PASSWORD = os.getenv("OPENSEARCH_PASSWORD", "admin")
@@ -158,8 +157,39 @@ def _local_delay_minutes(gateway_body: dict) -> Optional[float]:
     return None
 
 
-def invoke_local_gateway(raw_input: dict) -> Optional[float]:
-    """Call ml-gateway synchronously; return delay minutes or None."""
+def invoke_local_gateway_async(raw_input: dict) -> None:
+    def _run() -> None:
+        # Raw appointment JSON — gateway engineers 161-col wide row once (single source of truth).
+        payload = {"client_id": "fakeeh-flask-delay-proxy", "inputs": raw_input}
+        try:
+            response = requests.post(
+                LOCAL_GATEWAY_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=120,
+            )
+            if response.status_code != 200:
+                body = response.json() if response.content else {}
+                logger.warning(
+                    "Local delay gateway HTTP %s: %s",
+                    response.status_code,
+                    body.get("detail", response.text),
+                )
+                return
+            body = response.json() if response.content else {}
+            minutes = _local_delay_minutes(body)
+            if minutes is not None:
+                logger.info("Local delay gateway prediction: %.4f min", minutes)
+            else:
+                logger.info("Local delay gateway prediction: %s", body.get("prediction"))
+        except requests.RequestException as e:
+            logger.error("Local delay gateway error: %s", e)
+
+    threading.Thread(target=_run, name="local-delay-dup", daemon=True).start()
+
+
+def invoke_local_gateway_sync(raw_input: dict) -> Optional[float]:
+    """Local gateway inference (blocking). Returns delay minutes or None."""
     payload = {"client_id": "fakeeh-flask-delay-proxy", "inputs": raw_input}
     response = requests.post(
         LOCAL_GATEWAY_URL,
@@ -167,66 +197,9 @@ def invoke_local_gateway(raw_input: dict) -> Optional[float]:
         headers={"Content-Type": "application/json"},
         timeout=120,
     )
-    if response.status_code != 200:
-        body = response.json() if response.content else {}
-        raise RuntimeError(
-            f"Local delay gateway HTTP {response.status_code}: "
-            f"{body.get('detail', response.text)}"
-        )
-    minutes = _local_delay_minutes(response.json() if response.content else {})
-    if minutes is None:
-        raise RuntimeError("Local delay gateway returned no parseable prediction")
-    logger.info("Local delay gateway prediction: %.4f min", minutes)
-    return minutes
-
-
-def invoke_local_gateway_async(raw_input: dict) -> None:
-    def _run() -> None:
-        try:
-            invoke_local_gateway(raw_input)
-        except Exception as e:
-            logger.error("Local delay gateway error: %s", e)
-
-    threading.Thread(target=_run, name="local-delay-dup", daemon=True).start()
-
-
-def invoke_cloud_gateway(cloud_payload: dict) -> Optional[float]:
-    logger.info("Calling cloud API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
-    response = requests.post(API_GATEWAY_URL, json=cloud_payload, timeout=CLOUD_REQUEST_TIMEOUT)
     response.raise_for_status()
-    model_response = response.json()
-    return model_response.get("body", {}).get("delayed_arrival")
-
-
-def format_delay_client_response(predicted_time) -> object:
-    """Same JSON shape whether prediction came from cloud or local."""
-    return app.response_class(
-        response=json.dumps({"Predicted Delayed Time": predicted_time}, indent=4),
-        status=200,
-        mimetype="application/json",
-    )
-
-
-def resolve_delay_prediction(raw_input: dict, cloud_payload: dict) -> float:
-    predicted_time = None
-    if USE_LOCAL_AS_PRIMARY:
-        if LOCAL_GATEWAY_ENABLED:
-            try:
-                predicted_time = invoke_local_gateway(raw_input)
-            except Exception as e:
-                logger.warning("Local delay primary failed: %s", e)
-        if predicted_time is None and CLOUD_ENABLED:
-            predicted_time = invoke_cloud_gateway(cloud_payload)
-    else:
-        if CLOUD_ENABLED:
-            predicted_time = invoke_cloud_gateway(cloud_payload)
-        if LOCAL_GATEWAY_ENABLED:
-            invoke_local_gateway_async(raw_input)
-        if predicted_time is None and LOCAL_GATEWAY_ENABLED:
-            predicted_time = invoke_local_gateway(raw_input)
-    if predicted_time is None:
-        raise RuntimeError("No delay prediction from local or cloud")
-    return float(predicted_time)
+    body = response.json() if response.content else {}
+    return _local_delay_minutes(body)
 
 
 @app.route("/health", methods=["GET"])
@@ -245,21 +218,49 @@ def predict():
         payload = prepare_fakeeh_delay_cloud_payload(data)
         logger.info("Cloud payload: %s", json.dumps(payload))
 
-        predicted_time = resolve_delay_prediction(data, payload)
+        predicted_time: Optional[float] = None
+
+        if USE_LOCAL_PRIMARY:
+            logger.info("Calling local gateway (primary): %s", LOCAL_GATEWAY_URL)
+            try:
+                predicted_time = invoke_local_gateway_sync(data)
+            except Exception:
+                logger.exception("Local delay gateway (primary) failed")
+                predicted_time = None
+
+        if predicted_time is None and CLOUD_ENABLED:
+            # In cloud-primary mode, optionally fire local in background for comparison
+            if (not USE_LOCAL_PRIMARY) and LOCAL_GATEWAY_ENABLED:
+                invoke_local_gateway_async(data)
+
+            logger.info("Calling cloud API (timeout=%ss): %s", CLOUD_REQUEST_TIMEOUT, API_GATEWAY_URL)
+            response = requests.post(API_GATEWAY_URL, json=payload, timeout=CLOUD_REQUEST_TIMEOUT)
+            response.raise_for_status()
+            model_response = response.json()
+            predicted_time = model_response.get("body", {}).get("delayed_arrival")
+
+        if predicted_time is None:
+            raise ValueError("No delay prediction from local or cloud")
+
         save_to_opensearch(data, predicted_time)
-        return format_delay_client_response(predicted_time)
+
+        return app.response_class(
+            response=json.dumps({"Predicted Delayed Time": predicted_time}, indent=4),
+            status=200,
+            mimetype="application/json",
+        )
     except Exception as e:
         logger.exception("Delay prediction failed")
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    host = env_get("DELAY_FLASK_HOST", "FLASK_HOST", default="0.0.0.0")
+    host = os.getenv("FLASK_HOST", "0.0.0.0")
     port = int(env_get("DELAY_FLASK_PORT", "FLASK_PORT", default="5030"))
-    debug = env_bool("DELAY_FLASK_DEBUG", "FLASK_DEBUG", default="false")
+    debug = os.getenv("FLASK_DEBUG", "false").lower() in ("1", "true", "yes")
 
-    ssl_cert = env_get("DELAY_SSL_CERT", "SSL_CERT", default="/home/sysadmin/fakeeh.care/fullchain.pem")
-    ssl_key = env_get("DELAY_SSL_KEY", "SSL_KEY", default="/home/sysadmin/fakeeh.care/PK.key")
+    ssl_cert = os.getenv("SSL_CERT", "/home/sysadmin/fakeeh.care/fullchain.pem")
+    ssl_key = os.getenv("SSL_KEY", "/home/sysadmin/fakeeh.care/PK.key")
     use_ssl = env_bool("DELAY_FLASK_USE_SSL", "FLASK_USE_SSL", default="true")
 
     ssl_context = None
