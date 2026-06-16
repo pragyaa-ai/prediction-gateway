@@ -56,8 +56,8 @@ LOCAL_GATEWAY_URL = env_get(
     default="http://127.0.0.1:8000/v1/predict/los_fakeeh_ksa_local",
 )
 LOCAL_GATEWAY_ENABLED = env_bool("LOS_LOCAL_GATEWAY_ENABLED", "LOCAL_GATEWAY_ENABLED", default="true")
-USE_LOCAL_PRIMARY = env_bool("LOS_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
-CLOUD_ENABLED = env_bool("LOS_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
+USE_LOCAL_PRIMARY = env_bool("LOS_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="true")
+CLOUD_ENABLED = env_bool("LOS_CLOUD_ENABLED", "CLOUD_ENABLED", default="false")
 
 # Setup retry strategy for OpenSearch requests
 retry_strategy = Retry(

@@ -67,8 +67,8 @@ LOCAL_GATEWAY_URL = env_get(
     default="http://127.0.0.1:8000/v1/predict/no_show_fakeeh_ksa_local",
 )
 LOCAL_GATEWAY_ENABLED = env_bool("NOSHOW_LOCAL_GATEWAY_ENABLED", "LOCAL_GATEWAY_ENABLED", default="true")
-USE_LOCAL_PRIMARY = env_bool("NOSHOW_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="false")
-CLOUD_ENABLED = env_bool("NOSHOW_CLOUD_ENABLED", "CLOUD_ENABLED", default="true")
+USE_LOCAL_PRIMARY = env_bool("NOSHOW_USE_LOCAL_PRIMARY", "USE_LOCAL_PRIMARY", default="true")
+CLOUD_ENABLED = env_bool("NOSHOW_CLOUD_ENABLED", "CLOUD_ENABLED", default="false")
 
 OPENSEARCH_URL = os.getenv("OPENSEARCH_URL", "https://10.1.186.40:9200/")
 INDEX_NAME = env_get("NOSHOW_OPENSEARCH_INDEX", "OPENSEARCH_INDEX", default="fakeeh-prediction-no-show-index2")
